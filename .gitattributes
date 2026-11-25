@@ -1,0 +1,14 @@
+# Default: normalize text files.
+* text=auto
+
+# Must stay LF: executed inside Linux containers / Cloud Shell. CRLF breaks them.
+gradlew  text eol=lf
+*.sh     text eol=lf
+Dockerfile text eol=lf
+
+# Windows scripts.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binary.
+*.jar binary

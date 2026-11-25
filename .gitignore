@@ -1,0 +1,64 @@
+# ---------- IDE / editors ----------
+.idea/
+*.iml
+*.ipr
+*.iws
+out/
+.vscode/
+.history/
+*.swp
+*~
+
+# ---------- Backend (Gradle / Java / Kotlin) ----------
+.gradle/
+**/build/
+backend/bin/
+.kotlin/
+!gradle/wrapper/gradle-wrapper.jar
+!backend/gradle/wrapper/gradle-wrapper.jar
+# Angular build output is copied here only inside the Docker build.
+backend/src/main/resources/static/
+hs_err_pid*.log
+replay_pid*.log
+
+# ---------- Frontend (Angular / Node) ----------
+node_modules/
+frontend/dist/
+frontend/.angular/
+frontend/coverage/
+npm-debug.log*
+yarn-error.log*
+.npm/
+
+# ---------- Logs ----------
+*.log
+logs/
+
+# ---------- Secrets / local env ----------
+.env
+.env.*
+*.env
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+*-key.json
+*service-account*.json
+credentials.json
+application-secret*.y*ml
+application-secret*.properties
+
+# ---------- GCP / infra local state ----------
+.gcloud/
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+
+# ---------- OS ----------
+.DS_Store
+Thumbs.db
+desktop.ini

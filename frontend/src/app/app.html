@@ -1,0 +1,13 @@
+<header class="topbar">
+  <h1>Parking Reservation</h1>
+</header>
+
+<main class="content">
+  <section class="card">
+    <h2>System status</h2>
+    <p>Application: <strong>{{ appStatus() }}</strong></p>
+    <p>Database: <strong>{{ dbStatus() }}</strong></p>
+  </section>
+
+  <router-outlet />
+</main>

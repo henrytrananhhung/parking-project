@@ -1,0 +1,8 @@
+# Cloud Run -> Cloud SQL via the Cloud SQL Java Connector over private IP (Direct VPC egress).
+# The connector always uses TLS, which satisfies the instance's enforced SSL mode.
+# DB_PASSWORD is injected from Secret Manager with `gcloud run deploy --set-secrets`.
+spring:
+  datasource:
+    url: jdbc:postgresql:///${DB_NAME}?cloudSqlInstance=${INSTANCE_CONNECTION_NAME}&socketFactory=com.google.cloud.sql.postgres.SocketFactory&ipTypes=PRIVATE
+    username: ${DB_USER}
+    password: ${DB_PASSWORD}

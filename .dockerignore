@@ -1,0 +1,13 @@
+.git
+.idea
+.vscode
+**/node_modules
+frontend/dist
+frontend/.angular
+backend/.gradle
+backend/build
+backend/bin
+backend/src/main/resources/static
+docs
+infra
+*.md

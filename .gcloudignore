@@ -1,0 +1,17 @@
+# Files NOT uploaded by `gcloud run deploy --source .` (Cloud Build context).
+.gcloudignore
+.git
+.gitignore
+.idea
+.vscode
+**/node_modules
+frontend/dist
+frontend/.angular
+backend/.gradle
+backend/build
+backend/bin
+backend/src/main/resources/static
+docs
+*.md
+.env
+*.env

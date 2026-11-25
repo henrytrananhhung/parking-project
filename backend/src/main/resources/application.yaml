@@ -1,0 +1,32 @@
+spring:
+  application:
+    name: parking-reservation
+  profiles:
+    # Local development by default; Cloud Run sets SPRING_PROFILES_ACTIVE=gcp (or gcp,demo).
+    default: local
+  datasource:
+    hikari:
+      maximum-pool-size: ${DB_POOL_SIZE:5}
+      connection-timeout: ${DB_CONNECTION_TIMEOUT_MS:10000}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+  flyway:
+    enabled: true
+
+server:
+  port: ${PORT:8080}
+  shutdown: graceful
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      # Show component status (e.g. db: UP) but never connection details.
+      show-components: always
