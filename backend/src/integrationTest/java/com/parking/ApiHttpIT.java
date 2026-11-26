@@ -2,6 +2,7 @@ package com.parking;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -25,6 +26,9 @@ class ApiHttpIT extends IntegrationTestSupport {
 
     private static final ParameterizedTypeReference<Map<String, Object>> JSON = new ParameterizedTypeReference<>() {
     };
+    private static final ParameterizedTypeReference<List<Map<String, Object>>> JSON_LIST =
+            new ParameterizedTypeReference<>() {
+            };
 
     private record Driver(String token, Object vehicleId) {
     }
@@ -123,6 +127,58 @@ class ApiHttpIT extends IntegrationTestSupport {
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
         assertThat(response.getBody()).containsEntry("code", "VALIDATION_FAILED");
+    }
+
+    /** The JSON contract clients depend on: field names (and a few values) of every response body. */
+    @Test
+    @SuppressWarnings("unchecked")
+    void responseBodiesKeepTheirJsonShape() {
+        Map<String, Object> credentials = Map.of("username", "shape", "password", "password123");
+        Map<String, Object> registered = post("/api/auth/register", null, credentials, null).getBody();
+        assertThat(registered).containsOnlyKeys("token", "username").containsEntry("username", "shape");
+        assertThat(post("/api/auth/login", null, credentials, null).getBody()).containsOnlyKeys("token", "username");
+        String token = (String) registered.get("token");
+
+        assertThat(deposit(token, 10, UUID.randomUUID().toString()).getBody()).containsOnlyKeys("balanceCents");
+        assertThat(get("/api/wallet", token).getBody()).containsOnlyKeys("balanceCents").containsEntry("balanceCents", 1000);
+
+        Map<String, Object> vehicle = post("/api/vehicles", token, Map.of("plate", "SHAPE01"), null).getBody();
+        assertThat(vehicle).containsOnlyKeys("id", "plate").containsEntry("plate", "SHAPE01");
+        assertThat(getList("/api/vehicles", token)).singleElement()
+                .satisfies(v -> assertThat(v).containsOnlyKeys("id", "plate"));
+
+        Map<String, Object> reservation = reserve(new Driver(token, vehicle.get("id")), 9).getBody();
+        assertThat(reservation).containsOnlyKeys("id", "spaceId", "date", "plate", "priceCents")
+                .containsEntry("spaceId", 9).containsEntry("plate", "SHAPE01").containsEntry("priceCents", 1000);
+        assertThat(getList("/api/reservations/me", token)).singleElement()
+                .satisfies(r -> assertThat(r).containsOnlyKeys("id", "spaceId", "date", "plate", "priceCents"));
+
+        Map<String, Object> board = get("/api/spaces", token).getBody();
+        assertThat(board).containsOnlyKeys("date", "open", "opensAt", "timezone", "spaces")
+                .containsEntry("date", reservation.get("date")).containsEntry("open", true);
+        List<Map<String, Object>> spaces = (List<Map<String, Object>>) board.get("spaces");
+        assertThat(spaces).hasSize(80)
+                .allSatisfy(s -> assertThat(s).containsOnlyKeys("id", "reserved", "plateSuffix", "mine"));
+        assertThat(spaces.get(8)).containsEntry("id", 9).containsEntry("reserved", true)
+                .containsEntry("plateSuffix", "E01").containsEntry("mine", true);
+        assertThat(spaces.get(0)).containsEntry("id", 1).containsEntry("reserved", false)
+                .containsEntry("plateSuffix", null).containsEntry("mine", false);
+    }
+
+    @Test
+    void businessErrorsKeepTheirProblemDetailShape() {
+        String token = register("problem");
+
+        ResponseEntity<Map<String, Object>> response = post("/api/vehicles", token, Map.of("plate", "!"), null);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(response.getBody()).containsKeys("title", "status", "detail", "code")
+                .containsEntry("code", "INVALID_PLATE").containsEntry("title", "INVALID_PLATE")
+                .containsEntry("status", 400);
+    }
+
+    private List<Map<String, Object>> getList(String path, String token) {
+        return http.get().uri(path).headers(headers -> headers.setBearerAuth(token)).retrieve().body(JSON_LIST);
     }
 
     private String register(String username) {

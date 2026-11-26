@@ -24,11 +24,11 @@ import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.test.context.ActiveProfiles;
 
-import com.parking.auth.AuthService;
-import com.parking.common.BusinessException;
-import com.parking.reservation.ReservationWindow;
-import com.parking.vehicle.VehicleService;
-import com.parking.wallet.WalletService;
+import com.parking.service.AuthService;
+import com.parking.exception.BusinessException;
+import com.parking.service.ReservationWindow;
+import com.parking.service.VehicleService;
+import com.parking.service.WalletService;
 
 /**
  * Shared Spring context (real HTTP port) + real PostgreSQL (Testcontainers). Before each test the tables are
@@ -119,7 +119,7 @@ public abstract class IntegrationTestSupport {
     }
 
     protected long newVehicle(long userId, String plate) {
-        return vehicleService.register(userId, plate).getId();
+        return vehicleService.register(userId, plate).id();
     }
 
     protected long balanceCents(long userId) {
