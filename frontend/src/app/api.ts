@@ -56,8 +56,9 @@ export class Api {
     return this.http.get<Wallet>('/api/wallet');
   }
 
-  deposit(amount: number): Observable<Wallet> {
-    return this.http.post<Wallet>('/api/wallet/deposits', { amount });
+  /** Reuse the same idempotencyKey when retrying the same deposit: the server applies it once. */
+  deposit(amount: number, idempotencyKey: string): Observable<Wallet> {
+    return this.http.post<Wallet>('/api/wallet/deposits', { amount }, { headers: { 'Idempotency-Key': idempotencyKey } });
   }
 
   vehicles(): Observable<Vehicle[]> {

@@ -11,7 +11,11 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 
-/** Append-only money ledger entry: +amount for deposits, -amount for reservations. */
+/**
+ * Append-only money ledger entry: +amount for deposits, -amount for reservations.
+ * Reservation charges are saved through JPA; deposits are inserted by {@link DepositLedgerRepository}
+ * because they need {@code ON CONFLICT} on their idempotency key (column not mapped here).
+ */
 @Entity
 @Table(name = "wallet_transactions")
 public class WalletTransaction {
@@ -47,10 +51,6 @@ public class WalletTransaction {
         this.amountCents = amountCents;
         this.reservationId = reservationId;
         this.createdAt = Instant.now();
-    }
-
-    public static WalletTransaction deposit(long userId, long amountCents) {
-        return new WalletTransaction(userId, Type.DEPOSIT, amountCents, null);
     }
 
     public static WalletTransaction reservation(long userId, long priceCents, long reservationId) {

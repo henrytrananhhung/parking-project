@@ -15,12 +15,6 @@ spring:
   flyway:
     enabled: true
 
-logging:
-  level:
-    # Unique-constraint conflicts are expected business outcomes (SPACE_ALREADY_RESERVED, ...) and are
-    # mapped to 409 responses; don't log each one at ERROR. Unexpected DB errors still surface as exceptions.
-    org.hibernate.orm.jdbc.error: "OFF"
-
 server:
   port: ${PORT:8080}
   shutdown: graceful

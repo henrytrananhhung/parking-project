@@ -24,6 +24,12 @@ export class DashboardPage {
   protected depositAmount: number | null = null;
   protected newPlate = '';
 
+  /**
+   * One key per intended deposit: kept when a deposit fails (network error, 503) so clicking again retries the
+   * same deposit and the server applies it at most once; replaced after a success or when the amount changes.
+   */
+  private pendingDeposit: { amount: number; key: string } | null = null;
+
   protected readonly availableCount = computed(() => this.board()?.spaces.filter((s) => !s.reserved).length ?? 0);
   protected readonly dollars = dollars;
 
@@ -60,7 +66,11 @@ export class DashboardPage {
       this.fail('Enter an amount greater than 0.');
       return;
     }
-    this.run(this.api.deposit(amount), (wallet) => {
+    if (this.pendingDeposit?.amount !== amount) {
+      this.pendingDeposit = { amount, key: crypto.randomUUID() };
+    }
+    this.run(this.api.deposit(amount, this.pendingDeposit.key), (wallet) => {
+      this.pendingDeposit = null;
       this.balanceCents.set(wallet.balanceCents);
       this.depositAmount = null;
       this.ok(`Deposited ${dollars(Math.round(amount * 100))}.`);

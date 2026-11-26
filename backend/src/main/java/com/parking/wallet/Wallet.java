@@ -2,13 +2,20 @@ package com.parking.wallet;
 
 import java.time.Instant;
 
+import org.hibernate.annotations.Immutable;
+
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 
-/** Balance is only ever changed through atomic conditional UPDATEs in WalletRepository. */
+/**
+ * Balance is only ever changed through atomic conditional UPDATEs in WalletRepository.
+ * {@code @Immutable} enforces that: Hibernate never writes an UPDATE for a loaded Wallet, so a stale
+ * entity saved later cannot overwrite concurrent debits (lost update). Inserts still work.
+ */
 @Entity
+@Immutable
 @Table(name = "wallets")
 public class Wallet {
 

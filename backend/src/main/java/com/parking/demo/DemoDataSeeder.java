@@ -1,7 +1,9 @@
 package com.parking.demo;
 
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.UUID;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -84,11 +86,16 @@ public class DemoDataSeeder implements ApplicationRunner {
                 }
                 long userId = authService.createAccount(account.username(), password);
                 vehicleService.register(userId, account.plate());
-                walletService.deposit(userId, STARTING_BALANCE);
+                walletService.deposit(userId, STARTING_BALANCE, startingDepositKey(account));
                 count++;
             }
             return count;
         });
         return created == null ? 0 : created;
+    }
+
+    /** Deterministic per account: the starting deposit can never be applied twice. */
+    static UUID startingDepositKey(DemoAccount account) {
+        return UUID.nameUUIDFromBytes(("demo-starting-deposit:" + account.username()).getBytes(StandardCharsets.UTF_8));
     }
 }

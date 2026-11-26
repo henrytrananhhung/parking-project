@@ -31,7 +31,7 @@ Runtime identity: parking-run-sa (cloudsql.client, secretAccessor on 2 secrets, 
 |---|---|
 | `auth` | `AuthController`, `AuthService` (register/login), `TokenService` (JWT), `PasswordCipher` → `KmsPasswordCipher` (`gcp`) / `LocalAesPasswordCipher` (other profiles) |
 | `vehicle` | Plate normalization (`51f-123.45` → `51F12345`), globally unique plates, ownership |
-| `wallet` | Balance, deposits ($0.01–$1,000), atomic `UPDATE`s, append-only `wallet_transactions` ledger |
+| `wallet` | Balance, idempotent deposits ($0.01–$1,000, `Idempotency-Key`), atomic `UPDATE`s, append-only `wallet_transactions` ledger |
 | `reservation` | `ReservationWindow`, `ReservationService` (reserve, dashboard, my reservations), `ReservationConfirmed` event + after-commit logger |
 | `demo` | `DemoDataSeeder` (`demo` profile): `demo1`–`demo3` with $100 and one vehicle |
 | `common` | `SecurityConfig`, `ApiExceptionHandler` (ProblemDetail + `code`), `ErrorCode`, `Clock` bean |
@@ -42,28 +42,46 @@ Runtime identity: parking-run-sa (cloudsql.client, secretAccessor on 2 secrets, 
 |---|---|
 | `POST /api/auth/register`, `POST /api/auth/login` | Public; return `{token, username}` |
 | `GET/POST /api/vehicles` | List / register plates |
-| `GET /api/wallet`, `POST /api/wallet/deposits` | Balance (cents) / deposit `{amount}` in dollars |
+| `GET /api/wallet`, `POST /api/wallet/deposits` | Balance (cents) / deposit `{amount}` in dollars; requires header `Idempotency-Key: <uuid>` (reuse it when retrying) |
 | `GET /api/spaces` | Target date, window open, opening time, timezone, 80 spaces `{id, reserved, plateSuffix, mine}` |
 | `POST /api/reservations`, `GET /api/reservations/me` | Reserve `{spaceId, vehicleId}` / own reservations |
 | `GET /actuator/health` | Public; app + DB status (no details) |
 
-### Data model (Flyway V1, V2 seeds spaces 1–80)
+### Data model (Flyway V1, V2 seeds spaces 1–80, V3 deposit idempotency key)
 
 `users` (unique username, `password_cipher`) · `vehicles` (unique plate) · `wallets` (`balance_cents ≥ 0`) ·
-`wallet_transactions` (DEPOSIT / RESERVATION ledger) · `parking_spaces` (1–80) ·
+`wallet_transactions` (DEPOSIT / RESERVATION ledger, **`UNIQUE(user_id, idempotency_key)`**, new deposits must carry a key) · `parking_spaces` (1–80) ·
 `reservations` with **`UNIQUE(space_id, reservation_date)`** and **`UNIQUE(vehicle_id, reservation_date)`**.
 
 ## Reservation transaction
 
-`ReservationController` (non-transactional entry point) → `ReservationService.reserve()` (one `@Transactional` method):
+`ReservationController` (non-transactional entry point) → `ReservationService.reserve()`: step 1 runs before any transaction,
+steps 2–5 in one transaction (`TransactionTemplate`):
 
-1. **Window:** server clock in the business timezone. Target date = tomorrow, never supplied by the client; before the opening time → `RESERVATION_CLOSED`.
+1. **Window:** server clock in the business timezone. Target date = tomorrow, never supplied by the client; before the opening time → `RESERVATION_CLOSED`. Checked before the transaction starts, so answering "closed" to everyone clicking at 19:59 never takes a pool connection.
 2. **Ownership:** the vehicle must belong to the caller → otherwise `VEHICLE_NOT_FOUND`.
-3. **Claim:** `INSERT` reservation and flush. The unique constraints pick the winner under concurrency → `SPACE_ALREADY_RESERVED` / `VEHICLE_ALREADY_RESERVED`.
+3. **Claim:** `INSERT … ON CONFLICT DO NOTHING RETURNING id`. The unique constraints pick the winner under concurrency. On a conflict, the vehicle's reservation for that date is looked up:
+   - same vehicle, same space, same user → the request is a **retry**: return the original reservation (201, same body), charge nothing;
+   - vehicle holds a different space → `VEHICLE_ALREADY_RESERVED`;
+   - otherwise the space is taken → `SPACE_ALREADY_RESERVED`.
+
+   `ON CONFLICT` waits for an in-flight conflicting transaction like a plain `INSERT`, so a conflict always means a *committed* reservation, and it doesn't abort the transaction, so the lookup can run in it.
 4. **Pay:** `UPDATE wallets SET balance_cents = balance_cents - 1000 WHERE user_id = ? AND balance_cents >= 1000`. 0 rows → `INSUFFICIENT_BALANCE`.
 5. **Record:** ledger row. `ReservationConfirmed` is published in the transaction and handled only `AFTER_COMMIT`.
 
 Any exception rolls back steps 3–5, so a failed reservation never costs money.
+
+If the database is temporarily out of reach (connection pool exhausted at the 8 PM peak, connection lost, lock or query
+timeout), the API answers **503 `TEMPORARILY_UNAVAILABLE` with `Retry-After: 1`** instead of a 500, and logs one WARN line
+with the root cause. Retrying is safe because reservations and deposits are idempotent.
+
+## Deposit idempotency
+
+Deposits have no natural key, so the client generates a UUID per deposit and sends it as `Idempotency-Key`, reusing it when
+retrying (the Angular dashboard keeps it until the deposit succeeds or the amount changes). In one transaction:
+`INSERT` the ledger row `ON CONFLICT (user_id, idempotency_key) DO NOTHING`, and credit the wallet only if the row is new.
+A repeated key returns the current balance without crediting; the same key with a different amount → `422 IDEMPOTENCY_KEY_REUSED`;
+a missing or malformed key → `400 IDEMPOTENCY_KEY_INVALID`.
 
 ## Security
 
@@ -89,9 +107,11 @@ Environment variables: `RESERVATION_OPEN_TIME` (20:00), `RESERVATION_TIMEZONE` (
 
 | Level | Tooling | Scope |
 |---|---|---|
-| Unit (`./gradlew test`, 45) | JUnit 5, Mockito, `Clock.fixed` | Auth, cipher, JWT, vehicles, deposits, window, reservation outcomes. No Docker/GCP |
-| Integration (`./gradlew integrationTest`, 9) | Testcontainers PostgreSQL 17 | Concurrency (space, vehicle, balance), rollback, dashboard, concurrent demo seeding |
-| Smoke (`infra/smoke.ps1`, 22 checks) | Live HTTP | Full business flow against Cloud Run |
+| Unit (`./gradlew test`, 55) | JUnit 5, Mockito, `Clock.fixed`, standalone MockMvc | Auth, cipher, JWT, vehicles, deposits (idempotency), window, reservation outcomes (incl. replay), 503 mapping. No Docker/GCP |
+| Integration (`./gradlew integrationTest`, 29) | Testcontainers PostgreSQL 17, movable test clock, real HTTP port | 150-user race, concurrency (space, vehicle, balance), idempotent retries, rollback after the debit, pool exhaustion, real 20:00 window and per-day rule, HTTP status codes, demo seeding. Money/booking audit after every test |
+| Smoke (`infra/smoke.ps1`, 25 checks with the window open) | Live HTTP | Full business flow against Cloud Run, including deposit and reservation retries |
+
+`infra/deploy.ps1` runs unit **and** integration tests before every deploy.
 
 ## Extension points for Phase 2 (not implemented)
 

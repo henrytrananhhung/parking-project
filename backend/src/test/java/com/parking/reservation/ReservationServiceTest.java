@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -24,6 +25,8 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import com.parking.common.BusinessException;
 import com.parking.common.ErrorCode;
@@ -57,15 +60,34 @@ class ReservationServiceTest {
     @Mock
     JdbcClient jdbc;
 
+    PlatformTransactionManager txManager = mock(PlatformTransactionManager.class);
+
     private ReservationService serviceAt(Instant now) {
         ReservationWindow window = new ReservationWindow(Clock.fixed(now, ZoneOffset.UTC), "20:00", "Asia/Ho_Chi_Minh");
-        return new ReservationService(reservations, vehicles, wallets, ledger, window, events, jdbc, PRICE);
+        return new ReservationService(reservations, vehicles, wallets, ledger, window, events, jdbc,
+                new TransactionTemplate(txManager), PRICE);
     }
 
     private void ownsVehicle() {
         Vehicle vehicle = new Vehicle(USER, "51F12345");
         ReflectionTestUtils.setField(vehicle, "id", VEHICLE);
         when(vehicles.findByIdAndUserId(VEHICLE, USER)).thenReturn(Optional.of(vehicle));
+    }
+
+    private void spaceIsFree(long newReservationId) {
+        when(reservations.insertIfFree(SPACE, VEHICLE, USER, TOMORROW, PRICE)).thenReturn(Optional.of(newReservationId));
+    }
+
+    /** The insert hits a committed conflict; {@code vehiclesReservation} is what this vehicle already holds. */
+    private void conflictWhileVehicleHolds(Optional<Reservation> vehiclesReservation) {
+        when(reservations.insertIfFree(SPACE, VEHICLE, USER, TOMORROW, PRICE)).thenReturn(Optional.empty());
+        when(reservations.findByVehicleIdAndReservationDate(VEHICLE, TOMORROW)).thenReturn(vehiclesReservation);
+    }
+
+    private static Reservation existing(long id, int spaceId, long userId) {
+        Reservation r = new Reservation(spaceId, VEHICLE, userId, TOMORROW, PRICE);
+        ReflectionTestUtils.setField(r, "id", id);
+        return r;
     }
 
     private static ErrorCode codeOf(Throwable e) {
@@ -75,22 +97,13 @@ class ReservationServiceTest {
     @Test
     void successfulReservationDeductsExactlyTenDollarsRecordsLedgerAndPublishesEvent() {
         ownsVehicle();
-        when(reservations.saveAndFlush(any(Reservation.class))).thenAnswer(inv -> {
-            Reservation r = inv.getArgument(0);
-            ReflectionTestUtils.setField(r, "id", 99L);
-            return r;
-        });
+        spaceIsFree(99L);
         when(wallets.debitIfSufficient(USER, PRICE)).thenReturn(1);
 
         ReservationService.ReservationResult result = serviceAt(OPEN_INSTANT).reserve(USER, VEHICLE, SPACE);
 
         assertThat(result).isEqualTo(new ReservationService.ReservationResult(99L, SPACE, TOMORROW, "51F12345", PRICE));
-
-        ArgumentCaptor<Reservation> saved = ArgumentCaptor.forClass(Reservation.class);
-        verify(reservations).saveAndFlush(saved.capture());
-        assertThat(saved.getValue().getReservationDate()).isEqualTo(TOMORROW);
-        assertThat(saved.getValue().getSpaceId()).isEqualTo(SPACE);
-
+        verify(reservations).insertIfFree(SPACE, VEHICLE, USER, TOMORROW, PRICE);
         verify(wallets).debitIfSufficient(USER, 1000L);
 
         ArgumentCaptor<WalletTransaction> entry = ArgumentCaptor.forClass(WalletTransaction.class);
@@ -103,12 +116,24 @@ class ReservationServiceTest {
     }
 
     @Test
+    void repeatOfASuccessfulRequestReturnsTheOriginalReservationWithoutChargingAgain() {
+        ownsVehicle();
+        conflictWhileVehicleHolds(Optional.of(existing(99L, SPACE, USER)));
+
+        ReservationService.ReservationResult result = serviceAt(OPEN_INSTANT).reserve(USER, VEHICLE, SPACE);
+
+        assertThat(result).isEqualTo(new ReservationService.ReservationResult(99L, SPACE, TOMORROW, "51F12345", PRICE));
+        assertNothingCharged();
+    }
+
+    @Test
     void rejectsBeforeOpeningTimeWithoutTouchingTheDatabase() {
         Instant beforeOpening = Instant.parse("2026-11-26T12:59:00Z"); // 19:59 local
 
         assertThatThrownBy(() -> serviceAt(beforeOpening).reserve(USER, VEHICLE, SPACE))
                 .extracting(ReservationServiceTest::codeOf).isEqualTo(ErrorCode.RESERVATION_CLOSED);
-        verifyNoInteractions(vehicles, reservations, wallets, ledger, events);
+        // No transaction was even started, so no pool connection was taken.
+        verifyNoInteractions(txManager, vehicles, reservations, wallets, ledger, events);
     }
 
     @Test
@@ -121,10 +146,9 @@ class ReservationServiceTest {
     }
 
     @Test
-    void duplicateSpaceReservationIsRejectedWithoutCharging() {
+    void spaceTakenByAnotherVehicleIsRejectedWithoutCharging() {
         ownsVehicle();
-        when(reservations.saveAndFlush(any(Reservation.class))).thenThrow(new DataIntegrityViolationException(
-                "duplicate key value violates unique constraint \"uk_reservations_space_date\""));
+        conflictWhileVehicleHolds(Optional.empty());
 
         assertThatThrownBy(() -> serviceAt(OPEN_INSTANT).reserve(USER, VEHICLE, SPACE))
                 .extracting(ReservationServiceTest::codeOf).isEqualTo(ErrorCode.SPACE_ALREADY_RESERVED);
@@ -132,10 +156,19 @@ class ReservationServiceTest {
     }
 
     @Test
-    void duplicateVehicleReservationIsRejectedWithoutCharging() {
+    void vehicleHoldingAnotherSpaceIsRejectedWithoutCharging() {
         ownsVehicle();
-        when(reservations.saveAndFlush(any(Reservation.class))).thenThrow(new DataIntegrityViolationException(
-                "duplicate key value violates unique constraint \"uk_reservations_vehicle_date\""));
+        conflictWhileVehicleHolds(Optional.of(existing(55L, SPACE + 1, USER)));
+
+        assertThatThrownBy(() -> serviceAt(OPEN_INSTANT).reserve(USER, VEHICLE, SPACE))
+                .extracting(ReservationServiceTest::codeOf).isEqualTo(ErrorCode.VEHICLE_ALREADY_RESERVED);
+        assertNothingCharged();
+    }
+
+    @Test
+    void reservationMadeByAnotherUserIsNeverReplayed() {
+        ownsVehicle();
+        conflictWhileVehicleHolds(Optional.of(existing(99L, SPACE, USER + 1)));
 
         assertThatThrownBy(() -> serviceAt(OPEN_INSTANT).reserve(USER, VEHICLE, SPACE))
                 .extracting(ReservationServiceTest::codeOf).isEqualTo(ErrorCode.VEHICLE_ALREADY_RESERVED);
@@ -145,7 +178,7 @@ class ReservationServiceTest {
     @Test
     void unknownSpaceIsRejected() {
         ownsVehicle();
-        when(reservations.saveAndFlush(any(Reservation.class))).thenThrow(new DataIntegrityViolationException(
+        when(reservations.insertIfFree(999, VEHICLE, USER, TOMORROW, PRICE)).thenThrow(new DataIntegrityViolationException(
                 "insert or update on table \"reservations\" violates foreign key constraint \"reservations_space_id_fkey\""));
 
         assertThatThrownBy(() -> serviceAt(OPEN_INSTANT).reserve(USER, VEHICLE, 999))
@@ -154,9 +187,19 @@ class ReservationServiceTest {
     }
 
     @Test
+    void unexpectedIntegrityViolationIsNotDisguisedAsABusinessError() {
+        ownsVehicle();
+        DataIntegrityViolationException unexpected = new DataIntegrityViolationException("some other constraint");
+        when(reservations.insertIfFree(SPACE, VEHICLE, USER, TOMORROW, PRICE)).thenThrow(unexpected);
+
+        assertThatThrownBy(() -> serviceAt(OPEN_INSTANT).reserve(USER, VEHICLE, SPACE)).isSameAs(unexpected);
+        assertNothingCharged();
+    }
+
+    @Test
     void insufficientBalanceIsRejectedAndNoLedgerOrEvent() {
         ownsVehicle();
-        when(reservations.saveAndFlush(any(Reservation.class))).thenAnswer(inv -> inv.getArgument(0));
+        spaceIsFree(99L);
         when(wallets.debitIfSufficient(USER, PRICE)).thenReturn(0);
 
         assertThatThrownBy(() -> serviceAt(OPEN_INSTANT).reserve(USER, VEHICLE, SPACE))

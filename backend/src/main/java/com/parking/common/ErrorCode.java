@@ -15,7 +15,10 @@ public enum ErrorCode {
     SPACE_NOT_FOUND(HttpStatus.NOT_FOUND, "Parking space not found."),
     SPACE_ALREADY_RESERVED(HttpStatus.CONFLICT, "This parking space is already reserved for that date."),
     VEHICLE_ALREADY_RESERVED(HttpStatus.CONFLICT, "This vehicle already has a reservation for that date."),
-    INSUFFICIENT_BALANCE(HttpStatus.CONFLICT, "Insufficient balance. A reservation costs $10.");
+    INSUFFICIENT_BALANCE(HttpStatus.CONFLICT, "Insufficient balance. A reservation costs $10."),
+    IDEMPOTENCY_KEY_INVALID(HttpStatus.BAD_REQUEST, "Deposits need an Idempotency-Key header containing a UUID."),
+    IDEMPOTENCY_KEY_REUSED(HttpStatus.UNPROCESSABLE_CONTENT, "This Idempotency-Key was already used for a different deposit."),
+    TEMPORARILY_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "The service is busy. Please try again in a moment.");
 
     private final HttpStatus status;
     private final String message;

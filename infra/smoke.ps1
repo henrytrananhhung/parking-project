@@ -9,6 +9,7 @@
     (git-ignored) so it can be removed explicitly with infra/smoke-cleanup.sql.
   - Uses at most ONE parking space per run. Each business error is checked independently:
       deposit $15 -> V1 reserves free space S1 (balance $5)
+      V1 -> S1 again (client retry) : same reservation, not charged twice
       V2 -> S1 : SPACE_ALREADY_RESERVED
       V1 -> S2 : VEHICLE_ALREADY_RESERVED
       V2 -> S2 : INSUFFICIENT_BALANCE
@@ -29,10 +30,13 @@ $script:http = [System.Net.Http.HttpClient]::new()
 $script:http.Timeout = [TimeSpan]::FromSeconds(30)
 
 function Invoke-Api {
-    param([string]$Method, [string]$Path, $Body = $null, [string]$Token = '')
+    param([string]$Method, [string]$Path, $Body = $null, [string]$Token = '', [hashtable]$Headers = @{})
     $request = [System.Net.Http.HttpRequestMessage]::new([System.Net.Http.HttpMethod]::new($Method), "$BaseUrl$Path")
     if ($Token) {
         $request.Headers.Authorization = [System.Net.Http.Headers.AuthenticationHeaderValue]::new('Bearer', $Token)
+    }
+    foreach ($name in $Headers.Keys) {
+        $request.Headers.Add($name, [string]$Headers[$name])
     }
     if ($null -ne $Body) {
         $request.Content = [System.Net.Http.StringContent]::new(($Body | ConvertTo-Json -Compress),
@@ -102,11 +106,16 @@ Test-Check 'register 2 vehicles' ($v1.Status -eq 201 -and $v2.Status -eq 201) "s
 $vdup = Invoke-Api POST '/api/vehicles' @{ plate = $plate1.Insert(3, '-') } $token
 Test-Check 'duplicate plate (normalized) -> PLATE_TAKEN' ($vdup.Status -eq 409 -and $vdup.Body.code -eq 'PLATE_TAKEN') "status=$($vdup.Status)"
 
-# --- Wallet ---
-$badDeposit = Invoke-Api POST '/api/wallet/deposits' @{ amount = 0 } $token
+# --- Wallet (every deposit carries an Idempotency-Key; a retry reuses it) ---
+$noKey = Invoke-Api POST '/api/wallet/deposits' @{ amount = 15 } $token
+Test-Check 'deposit without Idempotency-Key -> IDEMPOTENCY_KEY_INVALID' ($noKey.Status -eq 400 -and $noKey.Body.code -eq 'IDEMPOTENCY_KEY_INVALID') "status=$($noKey.Status)"
+$badDeposit = Invoke-Api POST '/api/wallet/deposits' @{ amount = 0 } $token @{ 'Idempotency-Key' = [guid]::NewGuid().ToString() }
 Test-Check 'deposit 0 -> INVALID_AMOUNT' ($badDeposit.Status -eq 400 -and $badDeposit.Body.code -eq 'INVALID_AMOUNT') "status=$($badDeposit.Status)"
-$dep = Invoke-Api POST '/api/wallet/deposits' @{ amount = 15 } $token
+$depositKey = @{ 'Idempotency-Key' = [guid]::NewGuid().ToString() }
+$dep = Invoke-Api POST '/api/wallet/deposits' @{ amount = 15 } $token $depositKey
 Test-Check 'deposit $15 -> balance 1500 cents' ($dep.Status -eq 200 -and $dep.Body.balanceCents -eq 1500) "balance=$($dep.Body.balanceCents)"
+$depRetry = Invoke-Api POST '/api/wallet/deposits' @{ amount = 15 } $token $depositKey
+Test-Check 'deposit retried with the same key -> applied once (1500)' ($depRetry.Status -eq 200 -and $depRetry.Body.balanceCents -eq 1500) "balance=$($depRetry.Body.balanceCents)"
 
 # --- Dashboard ---
 $dash = Invoke-Api GET '/api/spaces' -Token $token
@@ -130,6 +139,10 @@ if (-not $dash.Body.open) {
     Test-Check 'exactly $10 deducted (1500 -> 500)' ((Get-Balance $token) -eq 500)
     $s1View = Get-Space $token $s1
     Test-Check 'S1 shows reserved, mine, last 3 plate chars' ($s1View.reserved -and $s1View.mine -and $s1View.plateSuffix -eq $plate1.Substring($plate1.Length - 3))
+
+    $retry = Invoke-Api POST '/api/reservations' @{ spaceId = $s1; vehicleId = $v1.Body.id } $token
+    Test-Check 'V1 -> S1 again (retry): same reservation' ($retry.Status -eq 201 -and $retry.Body.id -eq $ok.Body.id) "status=$($retry.Status) code=$($retry.Body.code)"
+    Test-Check '  not charged twice' ((Get-Balance $token) -eq 500)
 
     $e1 = Invoke-Api POST '/api/reservations' @{ spaceId = $s1; vehicleId = $v2.Body.id } $token
     Test-Check 'V2 -> S1: SPACE_ALREADY_RESERVED' ($e1.Status -eq 409 -and $e1.Body.code -eq 'SPACE_ALREADY_RESERVED') "code=$($e1.Body.code)"

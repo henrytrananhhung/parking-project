@@ -5,7 +5,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Random;
+import java.util.Set;
 import java.util.concurrent.Callable;
 
 import org.junit.jupiter.api.Test;
@@ -114,6 +117,88 @@ class ReservationConcurrencyIT extends IntegrationTestSupport {
         // ...so space 6 is still free for someone who can pay.
         reservationService.reserve(bob, bobCar, 6);
         assertThat(balanceCents(bob)).isEqualTo(4000L);
+    }
+
+    @Test
+    void realisticRace_manyUsersPickingRandomSpaces_eachPickedSpaceWonExactlyOnce() throws Exception {
+        // The 8 PM shape: more users than spaces, overlapping picks. Fixed seed: same picks every run.
+        int users = 150;
+        Random random = new Random(20_261_126L);
+        Set<Integer> pickedSpaces = new HashSet<>();
+        List<Callable<ReservationService.ReservationResult>> tasks = new ArrayList<>();
+        for (int i = 0; i < users; i++) {
+            long userId = newUser("user" + i, BigDecimal.TEN);
+            long vehicleId = newVehicle(userId, "CAR" + String.format("%04d", i));
+            int space = 1 + random.nextInt(80);
+            pickedSpaces.add(space);
+            tasks.add(() -> reservationService.reserve(userId, vehicleId, space));
+        }
+
+        List<Outcome<ReservationService.ReservationResult>> outcomes = runConcurrently(tasks);
+
+        // Every picked space has exactly one winner; everyone else lost to a taken space and paid nothing.
+        int winners = pickedSpaces.size();
+        assertThat(outcomes).filteredOn(Outcome::success).hasSize(winners);
+        assertThat(outcomes).filteredOn(o -> !o.success())
+                .extracting(Outcome::errorCode).containsOnly("SPACE_ALREADY_RESERVED").hasSize(users - winners);
+        assertThat(count("SELECT count(DISTINCT space_id) FROM reservations")).isEqualTo(winners);
+        assertThat(count("SELECT sum(balance_cents) FROM wallets")).isEqualTo((users - winners) * 1000L);
+    }
+
+    @Test
+    void winnerWhoCannotPayReleasesTheSpaceToTheNextInLine() throws Exception {
+        // 20 rounds so the "broke user inserts first, then rolls back" interleaving actually happens.
+        for (int space = 20; space < 40; space++) {
+            long broke = newUser("broke" + space, new BigDecimal("5"));
+            long brokeCar = newVehicle(broke, "BROKE" + space);
+            long payer = newUser("payer" + space, BigDecimal.TEN);
+            long payerCar = newVehicle(payer, "PAYER" + space);
+            int s = space;
+
+            List<Outcome<ReservationService.ReservationResult>> outcomes = runConcurrently(List.of(
+                    () -> reservationService.reserve(broke, brokeCar, s),
+                    () -> reservationService.reserve(payer, payerCar, s)));
+
+            assertThat(outcomes.get(1).success()).as("paying user, space %d", s).isTrue();
+            assertThat(outcomes.get(0).errorCode()).as("broke user, space %d", s)
+                    .isIn("INSUFFICIENT_BALANCE", "SPACE_ALREADY_RESERVED");
+        }
+    }
+
+    @Test
+    void failureAfterTheDebitRollsTheDebitBack() {
+        long userId = newUser("unlucky", BigDecimal.TEN);
+        long vehicleId = newVehicle(userId, "UNLUCKY1");
+        // Fault injection inside PostgreSQL: the reservation's ledger insert (after the debit) fails.
+        jdbc.sql("""
+                CREATE FUNCTION test_fail_reservation_charge() RETURNS trigger LANGUAGE plpgsql
+                AS $$ BEGIN RAISE EXCEPTION 'injected failure after the debit'; END $$
+                """).update();
+        jdbc.sql("""
+                CREATE TRIGGER test_fail_reservation_charge BEFORE INSERT ON wallet_transactions
+                FOR EACH ROW WHEN (NEW.type = 'RESERVATION') EXECUTE FUNCTION test_fail_reservation_charge()
+                """).update();
+        try {
+            assertThatThrownBy(() -> reservationService.reserve(userId, vehicleId, 9))
+                    .hasStackTraceContaining("injected failure after the debit");
+        } finally {
+            jdbc.sql("DROP TRIGGER test_fail_reservation_charge ON wallet_transactions").update();
+            jdbc.sql("DROP FUNCTION test_fail_reservation_charge()").update();
+        }
+
+        assertThat(balanceCents(userId)).isEqualTo(1000L);
+        assertThat(count("SELECT count(*) FROM reservations")).isZero();
+    }
+
+    @Test
+    void unknownSpaceIsRejectedByTheForeignKeyWithoutCharging() {
+        long userId = newUser("lost", new BigDecimal("10"));
+        long vehicleId = newVehicle(userId, "LOST001");
+
+        assertThatThrownBy(() -> reservationService.reserve(userId, vehicleId, 81))
+                .extracting(e -> ((BusinessException) e).code()).isEqualTo(ErrorCode.SPACE_NOT_FOUND);
+        assertThat(balanceCents(userId)).isEqualTo(1000L);
+        assertThat(count("SELECT count(*) FROM reservations")).isZero();
     }
 
     @Test

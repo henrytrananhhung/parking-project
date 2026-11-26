@@ -1,6 +1,8 @@
 <#
   Build + deploy to Cloud Run from Windows (PowerShell).
-  Unit tests must pass first; the container is built by Cloud Build from the root Dockerfile.
+  Unit AND integration tests must pass first (integration tests need Docker running: they prove the
+  concurrency, payment and idempotency rules against real PostgreSQL). The container is built by Cloud Build
+  from the root Dockerfile.
 
   Usage (from the repo root):
     .\infra\deploy.ps1 -ProjectId my-project
@@ -19,11 +21,20 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $Profiles = ($Profiles -join ',')
 
-Write-Host '==> Unit tests (./gradlew test)'
+Write-Host '==> Unit + integration tests (./gradlew test integrationTest)'
+# 'Continue' while probing: PowerShell 5.1 turns a native command's redirected stderr into a terminating error.
+$ErrorActionPreference = 'Continue'
+$dockerOk = $false
+if (Get-Command docker -ErrorAction SilentlyContinue) {
+    docker info --format '{{.ServerVersion}}' *> $null
+    $dockerOk = ($LASTEXITCODE -eq 0)
+}
+$ErrorActionPreference = 'Stop'
+if (-not $dockerOk) { throw 'Docker is not running: integration tests need it - deployment aborted.' }
 Push-Location (Join-Path $repoRoot 'backend')
 try {
-    .\gradlew.bat --console=plain test
-    if ($LASTEXITCODE -ne 0) { throw 'Unit tests failed - deployment aborted.' }
+    .\gradlew.bat --console=plain test integrationTest
+    if ($LASTEXITCODE -ne 0) { throw 'Tests failed - deployment aborted.' }
 } finally { Pop-Location }
 
 # '^;^' switches gcloud's list delimiter to ';' so SPRING_PROFILES_ACTIVE can contain commas.

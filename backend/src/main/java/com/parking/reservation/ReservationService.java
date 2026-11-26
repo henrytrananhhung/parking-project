@@ -2,6 +2,7 @@ package com.parking.reservation;
 
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Optional;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
@@ -9,6 +10,7 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import com.parking.common.BusinessException;
 import com.parking.common.Constraints;
@@ -23,6 +25,8 @@ import com.parking.wallet.WalletTransactionRepository;
  * Reservation business logic. PostgreSQL guarantees correctness:
  * unique (space, date) and (vehicle, date) constraints + an atomic conditional balance debit,
  * all in one transaction. Any failure rolls back everything, so failed reservations never cost money.
+ * Conflicts are detected with {@code INSERT ... ON CONFLICT DO NOTHING}, which keeps the transaction usable,
+ * so a repeat of an already-successful request can be answered with the original reservation.
  */
 @Service
 public class ReservationService {
@@ -46,11 +50,12 @@ public class ReservationService {
     private final ReservationWindow window;
     private final ApplicationEventPublisher events;
     private final JdbcClient jdbc;
+    private final TransactionTemplate tx;
     private final long priceCents;
 
     public ReservationService(ReservationRepository reservations, VehicleRepository vehicles,
             WalletRepository wallets, WalletTransactionRepository ledger, ReservationWindow window,
-            ApplicationEventPublisher events, JdbcClient jdbc,
+            ApplicationEventPublisher events, JdbcClient jdbc, TransactionTemplate tx,
             @Value("${parking.reservation.price-cents}") long priceCents) {
         this.reservations = reservations;
         this.vehicles = vehicles;
@@ -59,22 +64,31 @@ public class ReservationService {
         this.window = window;
         this.events = events;
         this.jdbc = jdbc;
+        this.tx = tx;
         this.priceCents = priceCents;
     }
 
-    @Transactional
+    /**
+     * Reserves {@code spaceId} for tomorrow and charges the price. Idempotent: repeating a request that
+     * already succeeded (client retry, double submit) returns the original reservation and charges nothing.
+     */
     public ReservationResult reserve(long userId, long vehicleId, int spaceId) {
+        // Checked before the transaction starts: answering "closed" to everyone clicking at 19:59
+        // must not take a connection from the pool.
         LocalDate date = window.requireOpen();
+        return tx.execute(status -> reserveInTransaction(userId, vehicleId, spaceId, date));
+    }
+
+    private ReservationResult reserveInTransaction(long userId, long vehicleId, int spaceId, LocalDate date) {
         Vehicle vehicle = vehicles.findByIdAndUserId(vehicleId, userId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.VEHICLE_NOT_FOUND));
 
         // 1. Claim the space: the unique constraints decide the winner under concurrency.
-        Reservation reservation;
-        try {
-            reservation = reservations.saveAndFlush(new Reservation(spaceId, vehicleId, userId, date, priceCents));
-        } catch (DataIntegrityViolationException e) {
-            throw toBusinessException(e);
+        Optional<Long> claimed = claim(spaceId, vehicleId, userId, date);
+        if (claimed.isEmpty()) {
+            return replayOrReject(userId, vehicleId, spaceId, date, vehicle.getPlate());
         }
+        long reservationId = claimed.get();
 
         // 2. Pay: atomic conditional debit. 0 rows => insufficient balance => whole transaction rolls back.
         if (wallets.debitIfSufficient(userId, priceCents) == 0) {
@@ -82,22 +96,35 @@ public class ReservationService {
         }
 
         // 3. Ledger + event (event listeners run only after commit).
-        ledger.save(WalletTransaction.reservation(userId, priceCents, reservation.getId()));
-        events.publishEvent(new ReservationConfirmed(reservation.getId(), spaceId, vehicleId, userId, date));
-        return new ReservationResult(reservation.getId(), spaceId, date, vehicle.getPlate(), priceCents);
+        ledger.save(WalletTransaction.reservation(userId, priceCents, reservationId));
+        events.publishEvent(new ReservationConfirmed(reservationId, spaceId, vehicleId, userId, date));
+        return new ReservationResult(reservationId, spaceId, date, vehicle.getPlate(), priceCents);
     }
 
-    private static BusinessException toBusinessException(DataIntegrityViolationException e) {
-        if (Constraints.violated(e, "uk_reservations_space_date")) {
-            return new BusinessException(ErrorCode.SPACE_ALREADY_RESERVED);
+    private Optional<Long> claim(int spaceId, long vehicleId, long userId, LocalDate date) {
+        try {
+            return reservations.insertIfFree(spaceId, vehicleId, userId, date, priceCents);
+        } catch (DataIntegrityViolationException e) {
+            // ON CONFLICT absorbs unique conflicts only; an unknown space still fails the foreign key.
+            if (Constraints.violated(e, "reservations_space_id_fkey")) {
+                throw new BusinessException(ErrorCode.SPACE_NOT_FOUND);
+            }
+            throw e;
         }
-        if (Constraints.violated(e, "uk_reservations_vehicle_date")) {
-            return new BusinessException(ErrorCode.VEHICLE_ALREADY_RESERVED);
+    }
+
+    /**
+     * The space or the vehicle is already reserved for the date (by a committed transaction).
+     * If it is this caller's own reservation of this vehicle on this space, the request is a repeat:
+     * return the original result. Otherwise report which rule blocked it.
+     */
+    private ReservationResult replayOrReject(long userId, long vehicleId, int spaceId, LocalDate date, String plate) {
+        Reservation existing = reservations.findByVehicleIdAndReservationDate(vehicleId, date)
+                .orElseThrow(() -> new BusinessException(ErrorCode.SPACE_ALREADY_RESERVED));
+        if (existing.getSpaceId() != spaceId || existing.getUserId() != userId) {
+            throw new BusinessException(ErrorCode.VEHICLE_ALREADY_RESERVED);
         }
-        if (Constraints.violated(e, "reservations_space_id_fkey")) {
-            return new BusinessException(ErrorCode.SPACE_NOT_FOUND);
-        }
-        throw e;
+        return new ReservationResult(existing.getId(), spaceId, date, plate, existing.getPriceCents());
     }
 
     /** All spaces for the target date. Single read path: the future Redis dashboard cache goes here. */

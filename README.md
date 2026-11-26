@@ -43,19 +43,22 @@ npm start                                     # UI on http://localhost:4200, pro
 
 ```powershell
 cd backend
-.\gradlew.bat test              # 45 unit tests (JUnit 5 + Mockito); no Docker, GCP or network needed
-.\gradlew.bat integrationTest   # 9 integration tests (Testcontainers PostgreSQL); Docker required
+.\gradlew.bat test              # 55 unit tests (JUnit 5 + Mockito); no Docker, GCP or network needed
+.\gradlew.bat integrationTest   # 29 integration tests (Testcontainers PostgreSQL); Docker required
 ```
 
 Unit tests mock repositories and the KMS-backed `PasswordCipher`; time comes from `Clock.fixed`.
-Integration tests prove what mocks cannot: concurrent reservations for the same space or vehicle, concurrent balance deductions,
-transaction rollback, and concurrent demo seeding. Reports: `backend/build/test-results/`.
+Integration tests prove what mocks cannot: a 150-user race for the 80 spaces, concurrent reservations for the same space or
+vehicle, concurrent balance deductions, retries and double submits (idempotency), rollback after the debit, connection-pool
+exhaustion, the real 20:00 window (driven by a movable test clock), HTTP status codes, and concurrent demo seeding.
+After every integration test, a check verifies that each balance equals its ledger total and every reservation was charged once.
+Reports: `backend/build/test-results/`.
 The frontend has no tests by design.
 
 ## Deployment (Cloud Run)
 
 1. **One-time GCP setup** (Cloud Shell, idempotent): `PROJECT_ID=<id> REGION=asia-southeast1 bash infra/setup.sh`
-2. **Deploy** from the repo root. Unit tests run first and abort the deploy on failure:
+2. **Deploy** from the repo root. Unit and integration tests run first (Docker must be running) and abort the deploy on failure:
    ```powershell
    .\infra\deploy.ps1 -ProjectId parking-project-demo-2026 -Profiles gcp,demo -MinInstances 1   # teammate demo
    .\infra\deploy.ps1 -ProjectId parking-project-demo-2026                                      # normal 20:00 rule
@@ -66,8 +69,6 @@ The frontend has no tests by design.
    ```
 4. **Roll back** if needed:
    `gcloud run services update-traffic parking-reservation --to-revisions=<revision>=100 --region asia-southeast1`
-
-Run `.\gradlew.bat integrationTest` before sharing a new demo build or after changing reservation / wallet code.
 
 ## Demo instructions (for teammates)
 

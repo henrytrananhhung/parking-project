@@ -15,8 +15,13 @@
 | 11 | One space per vehicle per day; a user may own several vehicles; no cancellation | Phase 1 assumption (pending, see below) |
 | 12 | Unit tests (Mockito) separate from Testcontainers integration tests | `./gradlew test` needs no Docker or GCP |
 | 13 | `DB_POOL_SIZE × max instances < Cloud SQL max_connections` | Avoid connection exhaustion when scaling (db-g1-small ≈ 50) |
-| 14 | Expected constraint conflicts not logged at ERROR (`org.hibernate.orm.jdbc.error: OFF`) | They are normal 409 outcomes; keeps Cloud Logging clean under contention |
+| 14 | Reservation idempotency by natural key: `(vehicle, date)` + space, via `INSERT … ON CONFLICT DO NOTHING` | A retry of a successful request returns the original reservation instead of a 409; no idempotency-key table. Conflicts raise no SQL errors, so Hibernate error logging stays on |
 | 15 | Flyway migrations are immutable once deployed | Schema changes go into new `V3+` migrations |
+| 16 | Temporary DB failures → `503 TEMPORARILY_UNAVAILABLE` + `Retry-After: 1` | Pool exhaustion at 8 PM is load, not a bug; tells clients to retry, which is safe for idempotent reservations and deposits |
+| 17 | Deposits require an `Idempotency-Key` header (UUID), `UNIQUE(user_id, idempotency_key)` in the ledger (V3) | Deposits have no natural key; a retried deposit is applied once. Required, not optional: a client that forgets it would silently double-credit |
+| 18 | Reservation window checked before the DB transaction (`TransactionTemplate`, as in `AuthService`) | "Closed" answers at 19:59 never take a pool connection |
+| 19 | Deploy gate runs unit **and** integration tests | Only the integration tests prove the concurrency, payment and idempotency rules |
+| 20 | Integration tests run the real 20:00 config with a movable `MutableClock` and BCrypt cost 4 | Tests the shipped window rule and dates deterministically; the 150-user race stays fast |
 
 ## Pending mentor confirmation
 
