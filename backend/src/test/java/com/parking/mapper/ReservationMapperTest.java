@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import org.junit.jupiter.api.Test;
 
 import com.parking.dto.response.SpaceStatusResponse;
+import com.parking.repository.projection.SpaceOccupancy;
 
 class ReservationMapperTest {
 
@@ -16,15 +17,15 @@ class ReservationMapperTest {
 
     @Test
     void reservedSpaceShowsOnlyThePlateSuffixAndWhetherItIsMine() {
-        assertThat(ReservationMapper.toSpaceStatus(7L, "51F12345", 3L, 3L))
-                .isEqualTo(new SpaceStatusResponse(7, true, "345", true));
-        assertThat(ReservationMapper.toSpaceStatus(7L, "51F12345", 3L, 4L))
-                .isEqualTo(new SpaceStatusResponse(7, true, "345", false));
+        SpaceOccupancy row = new SpaceOccupancy(7L, "51F12345", 3L);
+
+        assertThat(ReservationMapper.toSpaceStatus(row, 3L)).isEqualTo(new SpaceStatusResponse(7, true, "345", true));
+        assertThat(ReservationMapper.toSpaceStatus(row, 4L)).isEqualTo(new SpaceStatusResponse(7, true, "345", false));
     }
 
     @Test
     void freeSpaceHasNoPlateAndIsNobodys() {
-        assertThat(ReservationMapper.toSpaceStatus(8L, null, null, 3L))
+        assertThat(ReservationMapper.toSpaceStatus(new SpaceOccupancy(8L, null, null), 3L))
                 .isEqualTo(new SpaceStatusResponse(8, false, null, false));
     }
 }

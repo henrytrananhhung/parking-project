@@ -8,6 +8,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.parking.entity.WalletTransactionEntity;
 import com.parking.exception.BusinessException;
 import com.parking.exception.ErrorCode;
 import com.parking.repository.WalletRepository;
@@ -45,8 +46,8 @@ public class WalletService {
         Objects.requireNonNull(idempotencyKey, "idempotencyKey");
         long cents = toValidDepositCents(amount);
         // The ledger entry claims the key first; the wallet is credited only if the entry is new.
-        if (ledger.insertDepositIfNew(userId, cents, idempotencyKey).isEmpty()) {
-            long recordedCents = ledger.findDepositAmountCents(userId, idempotencyKey)
+        if (ledger.insertDepositIfNew(userId, cents, idempotencyKey) == 0) {
+            long recordedCents = ledger.findAmountCents(userId, idempotencyKey, WalletTransactionEntity.Type.DEPOSIT)
                     .orElseThrow(() -> new IllegalStateException("Idempotency key conflict without a deposit entry"));
             if (recordedCents != cents) {
                 throw new BusinessException(ErrorCode.IDEMPOTENCY_KEY_REUSED);

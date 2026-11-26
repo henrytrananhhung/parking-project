@@ -21,7 +21,7 @@ class DemoDataSeederIT extends IntegrationTestSupport {
     TransactionTemplate tx;
 
     private DemoDataSeeder newSeeder() {
-        return new DemoDataSeeder(authService, vehicleService, walletService, users, jdbc, tx, "TestDemoPass1");
+        return new DemoDataSeeder(authService, vehicleService, walletService, users, tx, "TestDemoPass1");
     }
 
     @Test

@@ -7,6 +7,10 @@ spring:
       # Fail fast instead of the 10 s production default: PoolExhaustionIT waits for this timeout,
       # and no other test should ever wait for a connection.
       connection-timeout: 2000
+  jpa:
+    properties:
+      # Statement counts for QueryCountIT. Test profile only.
+      hibernate.generate_statistics: true
 # The reservation window is NOT overridden: tests run the real 20:00 Asia/Ho_Chi_Minh rule and control time with
 # MutableClock (IntegrationTestSupport starts every test at 21:00 local).
 parking:

@@ -24,7 +24,6 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.beans.BeanUtils;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DataIntegrityViolationException;
-import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -39,6 +38,7 @@ import com.parking.entity.WalletTransactionEntity;
 import com.parking.event.ReservationConfirmedEvent;
 import com.parking.exception.BusinessException;
 import com.parking.exception.ErrorCode;
+import com.parking.repository.ParkingSpaceRepository;
 import com.parking.repository.ReservationRepository;
 import com.parking.repository.VehicleRepository;
 import com.parking.repository.WalletRepository;
@@ -66,13 +66,13 @@ class ReservationServiceTest {
     @Mock
     ApplicationEventPublisher events;
     @Mock
-    JdbcClient jdbc;
+    ParkingSpaceRepository parkingSpaces;
 
     PlatformTransactionManager txManager = mock(PlatformTransactionManager.class);
 
     private ReservationService serviceAt(Instant now) {
         ReservationWindow window = new ReservationWindow(Clock.fixed(now, ZoneOffset.UTC), "20:00", "Asia/Ho_Chi_Minh");
-        return new ReservationService(reservations, vehicles, wallets, ledger, window, events, jdbc,
+        return new ReservationService(reservations, vehicles, wallets, ledger, parkingSpaces, window, events,
                 new TransactionTemplate(txManager), PRICE);
     }
 

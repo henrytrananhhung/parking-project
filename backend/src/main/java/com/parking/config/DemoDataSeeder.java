@@ -11,7 +11,6 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.context.annotation.Profile;
-import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -48,18 +47,16 @@ public class DemoDataSeeder implements ApplicationRunner {
     private final VehicleService vehicleService;
     private final WalletService walletService;
     private final UserRepository users;
-    private final JdbcClient jdbc;
     private final TransactionTemplate tx;
     private final String password;
 
     public DemoDataSeeder(AuthService authService, VehicleService vehicleService, WalletService walletService,
-            UserRepository users, JdbcClient jdbc, TransactionTemplate tx,
+            UserRepository users, TransactionTemplate tx,
             @Value("${parking.demo.password}") String password) {
         this.authService = authService;
         this.vehicleService = vehicleService;
         this.walletService = walletService;
         this.users = users;
-        this.jdbc = jdbc;
         this.tx = tx;
         this.password = password;
     }
@@ -77,8 +74,7 @@ public class DemoDataSeeder implements ApplicationRunner {
     /** @return number of accounts created by this call. */
     public int seed() {
         Integer created = tx.execute(status -> {
-            jdbc.sql("SELECT pg_advisory_xact_lock(:key)").param("key", ADVISORY_LOCK_KEY)
-                    .query((rs, n) -> 1).list();
+            users.acquireTransactionLock(ADVISORY_LOCK_KEY);
             int count = 0;
             for (DemoAccount account : ACCOUNTS) {
                 if (users.existsByUsername(account.username())) {

@@ -1,20 +1,26 @@
 package com.parking.mapper;
 
+import com.parking.dto.response.MyReservationResponse;
 import com.parking.dto.response.SpaceStatusResponse;
+import com.parking.entity.ReservationEntity;
+import com.parking.repository.projection.SpaceOccupancy;
 
 public final class ReservationMapper {
 
     private ReservationMapper() {
     }
 
-    /**
-     * @param plate   plate of the vehicle holding the space, or {@code null} if the space is free
-     * @param ownerId user holding the space, or {@code null} if the space is free
-     */
-    public static SpaceStatusResponse toSpaceStatus(long spaceId, String plate, Long ownerId, long currentUserId) {
-        boolean reserved = plate != null;
-        return new SpaceStatusResponse(Math.toIntExact(spaceId), reserved, reserved ? plateSuffix(plate) : null,
-                reserved && ownerId != null && ownerId == currentUserId);
+    public static SpaceStatusResponse toSpaceStatus(SpaceOccupancy row, long currentUserId) {
+        boolean reserved = row.plate() != null;
+        return new SpaceStatusResponse(Math.toIntExact(row.spaceId()), reserved,
+                reserved ? plateSuffix(row.plate()) : null,
+                reserved && row.userId() != null && row.userId() == currentUserId);
+    }
+
+    /** Reads only the space id (no space query) and the vehicle fetched with the reservation. */
+    public static MyReservationResponse toMyReservation(ReservationEntity reservation) {
+        return new MyReservationResponse(reservation.getId(), Math.toIntExact(reservation.getSpace().getId()),
+                reservation.getReservationDate(), reservation.getVehicle().getPlate(), reservation.getPriceCents());
     }
 
     /** "51F12345" -> "345": the dashboard never shows a full plate. */

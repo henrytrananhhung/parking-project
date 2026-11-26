@@ -7,7 +7,6 @@ import java.util.Optional;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DataIntegrityViolationException;
-import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -24,6 +23,7 @@ import com.parking.exception.BusinessException;
 import com.parking.exception.Constraints;
 import com.parking.exception.ErrorCode;
 import com.parking.mapper.ReservationMapper;
+import com.parking.repository.ParkingSpaceRepository;
 import com.parking.repository.ReservationRepository;
 import com.parking.repository.VehicleRepository;
 import com.parking.repository.WalletRepository;
@@ -43,23 +43,23 @@ public class ReservationService {
     private final VehicleRepository vehicles;
     private final WalletRepository wallets;
     private final WalletTransactionRepository ledger;
+    private final ParkingSpaceRepository parkingSpaces;
     private final ReservationWindow window;
     private final ApplicationEventPublisher events;
-    private final JdbcClient jdbc;
     private final TransactionTemplate tx;
     private final long priceCents;
 
     public ReservationService(ReservationRepository reservations, VehicleRepository vehicles,
-            WalletRepository wallets, WalletTransactionRepository ledger, ReservationWindow window,
-            ApplicationEventPublisher events, JdbcClient jdbc, TransactionTemplate tx,
+            WalletRepository wallets, WalletTransactionRepository ledger, ParkingSpaceRepository parkingSpaces,
+            ReservationWindow window, ApplicationEventPublisher events, TransactionTemplate tx,
             @Value("${parking.reservation.price-cents}") long priceCents) {
         this.reservations = reservations;
         this.vehicles = vehicles;
         this.wallets = wallets;
         this.ledger = ledger;
+        this.parkingSpaces = parkingSpaces;
         this.window = window;
         this.events = events;
-        this.jdbc = jdbc;
         this.tx = tx;
         this.priceCents = priceCents;
     }
@@ -125,35 +125,22 @@ public class ReservationService {
         return new ReservationResponse(existing.getId(), spaceId, date, plate, existing.getPriceCents());
     }
 
-    /** All spaces for the target date. Single read path: the future Redis dashboard cache goes here. */
+    /**
+     * All spaces for the target date, in one query. Single read path: the future Redis dashboard cache goes here.
+     */
     @Transactional(readOnly = true)
     public DashboardResponse dashboard(long userId) {
         LocalDate date = window.targetDate();
-        List<SpaceStatusResponse> spaces = jdbc.sql("""
-                SELECT s.id, v.plate, r.user_id
-                FROM parking_spaces s
-                LEFT JOIN reservations r ON r.space_id = s.id AND r.reservation_date = :date
-                LEFT JOIN vehicles v ON v.id = r.vehicle_id
-                ORDER BY s.id
-                """)
-                .param("date", date)
-                .query((rs, n) -> ReservationMapper.toSpaceStatus(rs.getLong(1), rs.getString(2),
-                        rs.getObject(3, Long.class), userId))
-                .list();
+        List<SpaceStatusResponse> spaces = parkingSpaces.findOccupancy(date).stream()
+                .map(row -> ReservationMapper.toSpaceStatus(row, userId))
+                .toList();
         return new DashboardResponse(date, window.isOpen(), window.openTime().toString(), window.zone().getId(), spaces);
     }
 
     @Transactional(readOnly = true)
     public List<MyReservationResponse> myReservations(long userId) {
-        return jdbc.sql("""
-                SELECT r.id, r.space_id, r.reservation_date, v.plate, r.price_cents
-                FROM reservations r JOIN vehicles v ON v.id = r.vehicle_id
-                WHERE r.user_id = :userId
-                ORDER BY r.reservation_date DESC, r.space_id
-                """)
-                .param("userId", userId)
-                .query((rs, n) -> new MyReservationResponse(rs.getLong(1), rs.getInt(2),
-                        rs.getObject(3, LocalDate.class), rs.getString(4), rs.getLong(5)))
-                .list();
+        return reservations.findAllByUserIdWithVehicle(userId).stream()
+                .map(ReservationMapper::toMyReservation)
+                .toList();
     }
 }

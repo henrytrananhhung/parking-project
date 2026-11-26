@@ -1,5 +1,6 @@
 package com.parking.service;
 
+import static com.parking.entity.WalletTransactionEntity.Type.DEPOSIT;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
@@ -62,7 +63,7 @@ class WalletServiceTest {
 
     @Test
     void newDepositRecordsLedgerEntryCreditsCentsAndReturnsNewBalance() {
-        when(ledger.insertDepositIfNew(1L, 1550L, KEY)).thenReturn(Optional.of(31L));
+        when(ledger.insertDepositIfNew(1L, 1550L, KEY)).thenReturn(1);
         when(wallets.credit(1L, 1550L)).thenReturn(1);
         when(wallets.findBalanceCents(1L)).thenReturn(Optional.of(2550L));
 
@@ -72,8 +73,8 @@ class WalletServiceTest {
 
     @Test
     void repeatedKeyReturnsTheBalanceWithoutCreditingAgain() {
-        when(ledger.insertDepositIfNew(1L, 1550L, KEY)).thenReturn(Optional.empty());
-        when(ledger.findDepositAmountCents(1L, KEY)).thenReturn(Optional.of(1550L));
+        when(ledger.insertDepositIfNew(1L, 1550L, KEY)).thenReturn(0);
+        when(ledger.findAmountCents(1L, KEY, DEPOSIT)).thenReturn(Optional.of(1550L));
         when(wallets.findBalanceCents(1L)).thenReturn(Optional.of(2550L));
 
         assertThat(service.deposit(1L, new BigDecimal("15.50"), KEY)).isEqualTo(2550L);
@@ -82,8 +83,8 @@ class WalletServiceTest {
 
     @Test
     void keyReusedForADifferentAmountIsRejectedWithoutCrediting() {
-        when(ledger.insertDepositIfNew(1L, 2000L, KEY)).thenReturn(Optional.empty());
-        when(ledger.findDepositAmountCents(1L, KEY)).thenReturn(Optional.of(1550L));
+        when(ledger.insertDepositIfNew(1L, 2000L, KEY)).thenReturn(0);
+        when(ledger.findAmountCents(1L, KEY, DEPOSIT)).thenReturn(Optional.of(1550L));
 
         assertThatThrownBy(() -> service.deposit(1L, new BigDecimal("20"), KEY))
                 .extracting(WalletServiceTest::codeOf).isEqualTo(ErrorCode.IDEMPOTENCY_KEY_REUSED);
@@ -92,7 +93,7 @@ class WalletServiceTest {
 
     @Test
     void acceptsDepositExactlyAtTheLimit() {
-        when(ledger.insertDepositIfNew(1L, 100_000L, KEY)).thenReturn(Optional.of(31L));
+        when(ledger.insertDepositIfNew(1L, 100_000L, KEY)).thenReturn(1);
         when(wallets.credit(1L, 100_000L)).thenReturn(1);
         when(wallets.findBalanceCents(1L)).thenReturn(Optional.of(100_000L));
 
@@ -102,7 +103,7 @@ class WalletServiceTest {
     @Test
     void depositToMissingWalletFails() {
         // The ledger entry inserted first is removed by the transaction rollback.
-        when(ledger.insertDepositIfNew(1L, 1000L, KEY)).thenReturn(Optional.of(31L));
+        when(ledger.insertDepositIfNew(1L, 1000L, KEY)).thenReturn(1);
         when(wallets.credit(1L, 1000L)).thenReturn(0);
 
         assertThatThrownBy(() -> service.deposit(1L, BigDecimal.TEN, KEY))
