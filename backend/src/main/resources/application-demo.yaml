@@ -1,0 +1,9 @@
+# Teammate demo: added on top of the gcp profile (SPRING_PROFILES_ACTIVE=gcp,demo).
+# Same business rules; only the opening time changes, so reservations for tomorrow are open all day.
+# There is no API to bypass the opening time.
+parking:
+  reservation:
+    open-time: ${RESERVATION_OPEN_TIME:00:00}
+  demo:
+    # Synthetic demo accounts only (demo1..demo3).
+    password: ${DEMO_PASSWORD:DemoPass2026}

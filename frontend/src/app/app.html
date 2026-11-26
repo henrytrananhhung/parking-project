@@ -1,13 +1,13 @@
 <header class="topbar">
   <h1>Parking Reservation</h1>
+  @if (auth.loggedIn()) {
+    <div class="topbar-user">
+      <span>Signed in as <strong>{{ auth.username() }}</strong></span>
+      <button type="button" class="link" (click)="logout()">Log out</button>
+    </div>
+  }
 </header>
 
 <main class="content">
-  <section class="card">
-    <h2>System status</h2>
-    <p>Application: <strong>{{ appStatus() }}</strong></p>
-    <p>Database: <strong>{{ dbStatus() }}</strong></p>
-  </section>
-
   <router-outlet />
 </main>

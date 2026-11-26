@@ -17,6 +17,9 @@ repositories {
 	mavenCentral()
 }
 
+// Load Mockito as a Java agent explicitly (JDK 21+ warns about, and will block, dynamic self-attach).
+val mockitoAgent: Configuration by configurations.creating
+
 dependencies {
 	implementation("org.springframework.boot:spring-boot-starter-actuator")
 	implementation("org.springframework.boot:spring-boot-starter-data-jpa")
@@ -29,11 +32,18 @@ dependencies {
 	runtimeOnly("org.postgresql:postgresql")
 	// Cloud SQL Java Connector: private IP + TLS handled by the socket factory (gcp profile only).
 	runtimeOnly("com.google.cloud.sql:postgres-socket-factory:1.31.1")
+	// Cloud KMS client for password protection (used only by KmsPasswordCipher in the gcp profile).
+	implementation(platform("com.google.cloud:libraries-bom:26.94.0"))
+	implementation("com.google.cloud:google-cloud-kms")
 
 	// Unit tests: JUnit 5 + Mockito + AssertJ. No Docker, no GCP, no network.
 	testImplementation("org.springframework.boot:spring-boot-starter-test")
-	testImplementation("org.springframework.security:spring-security-test")
 	testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+	mockitoAgent("org.mockito:mockito-core") { isTransitive = false }
+}
+
+tasks.withType<Test>().configureEach {
+	jvmArgumentProviders.add(CommandLineArgumentProvider { listOf("-javaagent:${mockitoAgent.singleFile}") })
 }
 
 // Integration tests live in src/integrationTest and run only via `./gradlew integrationTest`
@@ -49,7 +59,6 @@ testing {
 				implementation(project())
 				implementation("org.springframework.boot:spring-boot-starter-test")
 				implementation("org.springframework.boot:spring-boot-testcontainers")
-				implementation("org.testcontainers:testcontainers-junit-jupiter")
 				implementation("org.testcontainers:testcontainers-postgresql")
 			}
 		}

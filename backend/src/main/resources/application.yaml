@@ -15,6 +15,12 @@ spring:
   flyway:
     enabled: true
 
+logging:
+  level:
+    # Unique-constraint conflicts are expected business outcomes (SPACE_ALREADY_RESERVED, ...) and are
+    # mapped to 409 responses; don't log each one at ERROR. Unexpected DB errors still surface as exceptions.
+    org.hibernate.orm.jdbc.error: "OFF"
+
 server:
   port: ${PORT:8080}
   shutdown: graceful
@@ -30,3 +36,20 @@ management:
         enabled: true
       # Show component status (e.g. db: UP) but never connection details.
       show-components: always
+
+parking:
+  jwt:
+    # Base64 HMAC key (>= 32 bytes). Overridden by JWT_SECRET (Secret Manager) in the gcp profile.
+    secret: ${JWT_SECRET:bG9jYWwtZGV2LW9ubHktand0LXNpZ25pbmcta2V5LTAxMjM0NTY3ODk=}
+    ttl: ${JWT_TTL:12h}
+  password-cipher:
+    # Base64 AES-256 key for LocalAesPasswordCipher (non-gcp profiles only; gcp uses Cloud KMS).
+    local-key: ${LOCAL_CIPHER_KEY:bG9jYWwtZGV2LW9ubHktYWVzLWtleS0wMTIzNDU2Nzg=}
+  reservation:
+    # Reservations for tomorrow open at this local time and stay open until midnight.
+    open-time: ${RESERVATION_OPEN_TIME:20:00}
+    # Business timezone (pending mentor confirmation).
+    timezone: ${RESERVATION_TIMEZONE:Asia/Ho_Chi_Minh}
+    price-cents: 1000
+  wallet:
+    max-deposit-cents: 100000

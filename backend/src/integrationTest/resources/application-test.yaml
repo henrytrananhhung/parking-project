@@ -1,0 +1,12 @@
+# Integration tests (Testcontainers supplies the datasource via @ServiceConnection).
+spring:
+  datasource:
+    hikari:
+      # Enough connections for every concurrent test thread to really contend in PostgreSQL.
+      maximum-pool-size: 25
+parking:
+  reservation:
+    # Window always open so concurrency tests are independent of the time of day.
+    open-time: "00:00"
+  demo:
+    password: TestDemoPass1

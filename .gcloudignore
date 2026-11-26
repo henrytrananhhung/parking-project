@@ -1,17 +1,33 @@
 # Files NOT uploaded by `gcloud run deploy --source .` (Cloud Build context).
+# Only Dockerfile, backend/ and frontend/ sources are needed to build the image.
 .gcloudignore
 .git
 .gitignore
+.gitattributes
 .idea
 .vscode
+docs
+infra
+*.md
+*.log
+
+# Build output / dependencies (rebuilt inside the image)
 **/node_modules
+**/build
+**/.gradle
+backend/bin
 frontend/dist
 frontend/.angular
-backend/.gradle
-backend/build
-backend/bin
 backend/src/main/resources/static
-docs
-*.md
+
+# Secrets must never be uploaded
 .env
+.env.*
 *.env
+*.pem
+*.key
+*.p12
+*.jks
+*-key.json
+*service-account*.json
+credentials.json

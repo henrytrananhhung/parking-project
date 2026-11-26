@@ -1,13 +1,29 @@
+# Docker build context: only Dockerfile, backend/ and frontend/ sources are needed.
 .git
 .idea
 .vscode
-**/node_modules
-frontend/dist
-frontend/.angular
-backend/.gradle
-backend/build
-backend/bin
-backend/src/main/resources/static
 docs
 infra
 *.md
+*.log
+
+# Build output / dependencies (rebuilt inside the image)
+**/node_modules
+**/build
+**/.gradle
+backend/bin
+frontend/dist
+frontend/.angular
+backend/src/main/resources/static
+
+# Secrets must never enter an image
+.env
+.env.*
+*.env
+*.pem
+*.key
+*.p12
+*.jks
+*-key.json
+*service-account*.json
+credentials.json

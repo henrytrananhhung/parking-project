@@ -1,42 +1,96 @@
 # Parking Reservation System
 
-80 parking spaces, $10/day, reservations open at 20:00 for the next day.
-Spring Boot (Java 21) + Angular in **one container** on **Google Cloud Run**, PostgreSQL on **Cloud SQL** (private IP, SSL enforced).
+80 parking spaces, $10 per day, reservations for tomorrow open daily at 20:00 (Asia/Ho_Chi_Minh).
+Spring Boot (Java 21) + Angular in **one container** on **Google Cloud Run**, PostgreSQL on **Cloud SQL**
+(private IP, SSL enforced), passwords protected with **Cloud KMS**.
 
-## Prerequisites (local, Windows)
+**Live demo:** https://parking-reservation-866340516434.asia-southeast1.run.app
 
-- JDK 21 with `JAVA_HOME` set (e.g. `C:\Users\<you>\.jdks\graalvm-jdk-21.0.7`)
-- Docker Desktop (local PostgreSQL + Testcontainers)
-- Node 24 (frontend dev only; the Docker build has its own Node)
-- Google Cloud CLI (`gcloud`) for deployment
+Docs: [architecture](docs/architecture.md) · [decisions & pending mentor questions](docs/decisions.md) ·
+[Phase 1 status & verification](docs/phase1-status.md) · [AI usage log](docs/ai-log.md)
 
-## Run locally
+## Features
+
+- Register / log in (stateless JWT). Passwords are BCrypt-hashed, then encrypted with Cloud KMS (local AES-GCM in dev/tests).
+- Register vehicle license plates (normalized, globally unique).
+- Wallet: view balance, deposit up to $1,000 per deposit (no payment gateway, no withdrawal).
+- Dashboard of 80 spaces: available / reserved (last 3 plate characters) / mine.
+- Reserve a space for tomorrow: $10 deducted atomically. PostgreSQL guarantees one vehicle per space per day, one space
+  per vehicle per day, no negative balance, and full rollback when anything fails.
+
+## Prerequisites
+
+- JDK 21 (`java` on PATH or `JAVA_HOME` set)
+- Docker Desktop (local PostgreSQL and integration tests)
+- Node 24 (frontend development only; the Docker build has its own Node)
+- Google Cloud CLI (`gcloud`), for deployment only
+
+## Local development
 
 ```powershell
-docker compose up -d                 # PostgreSQL 17 on localhost:5432
-cd backend; .\gradlew.bat bootRun    # http://localhost:8080 (profile: local)
-cd frontend; npm start               # http://localhost:4200, proxies /api to :8080
+docker compose up -d                          # PostgreSQL 17 on localhost:5432
+
+cd backend
+$env:RESERVATION_OPEN_TIME = '00:00'          # optional: reserve at any time of day
+.\gradlew.bat bootRun                         # API on http://localhost:8080 (profile: local)
+
+cd ..\frontend
+npm install
+npm start                                     # UI on http://localhost:4200, proxies /api to :8080
 ```
 
 ## Tests
 
 ```powershell
 cd backend
-.\gradlew.bat test              # unit tests: JUnit 5 + Mockito, no Docker/GCP needed
-.\gradlew.bat integrationTest   # Testcontainers PostgreSQL, needs Docker
+.\gradlew.bat test              # 45 unit tests (JUnit 5 + Mockito); no Docker, GCP or network needed
+.\gradlew.bat integrationTest   # 9 integration tests (Testcontainers PostgreSQL); Docker required
 ```
 
-## Deploy
+Unit tests mock repositories and the KMS-backed `PasswordCipher`; time comes from `Clock.fixed`.
+Integration tests prove what mocks cannot: concurrent reservations for the same space or vehicle, concurrent balance deductions,
+transaction rollback, and concurrent demo seeding. Reports: `backend/build/test-results/`.
+The frontend has no tests by design.
 
-1. One-time GCP setup in Cloud Shell: `PROJECT_ID=<id> REGION=asia-southeast1 bash infra/setup.sh`
-2. Deploy from the repo root (runs unit tests first):
-   `.\infra\deploy.ps1 -ProjectId <id>`
+## Deployment (Cloud Run)
 
-## Profiles
+1. **One-time GCP setup** (Cloud Shell, idempotent): `PROJECT_ID=<id> REGION=asia-southeast1 bash infra/setup.sh`
+2. **Deploy** from the repo root. Unit tests run first and abort the deploy on failure:
+   ```powershell
+   .\infra\deploy.ps1 -ProjectId parking-project-demo-2026 -Profiles gcp,demo -MinInstances 1   # teammate demo
+   .\infra\deploy.ps1 -ProjectId parking-project-demo-2026                                      # normal 20:00 rule
+   ```
+3. **Smoke test** the live service (creates one `smoke-…` account, uses one space):
+   ```powershell
+   .\infra\smoke.ps1 -BaseUrl https://parking-reservation-866340516434.asia-southeast1.run.app
+   ```
+4. **Roll back** if needed:
+   `gcloud run services update-traffic parking-reservation --to-revisions=<revision>=100 --region asia-southeast1`
 
-| Profile | Used for |
-|---|---|
-| `local` (default) | docker-compose PostgreSQL |
-| `test` | integration tests (Testcontainers) |
-| `gcp` | Cloud Run → Cloud SQL via Java Connector (private IP), secrets from Secret Manager |
-| `demo` | added on top of `gcp` for the teammate demo |
+Run `.\gradlew.bat integrationTest` before sharing a new demo build or after changing reservation / wallet code.
+
+## Demo instructions (for teammates)
+
+1. Open the live URL. Register an account, or log in as `demo1`, `demo2` or `demo3` (password `DemoPass2026`, $100 each, synthetic data).
+2. Add a license plate (e.g. `51F-123.45`) and deposit some money.
+3. Click a green space to reserve it for tomorrow ($10). Reserved spaces show the last 3 plate characters; yours are blue.
+4. Try the rules: the same vehicle twice, a space that is already taken, or too little balance. Each is rejected and no money is taken.
+
+The demo deployment keeps every business rule but opens the window all day (`demo` profile, opening time 00:00).
+There is no API to bypass the opening time.
+
+## Smoke-test cleanup
+
+Each smoke run records its account in `infra/smoke-accounts.log` (git-ignored). To remove live smoke data, paste the usernames into
+[infra/smoke-cleanup.sql](infra/smoke-cleanup.sql) and run it in Cloud SQL Studio. Only listed usernames that also match the strict
+`smoke-yyyyMMdd-HHmmss-xxxx` pattern are deleted. Step-by-step: [docs/phase1-status.md](docs/phase1-status.md#cleaning-up-the-two-live-smoke-test-accounts).
+
+## Project structure
+
+```text
+backend/    Spring Boot (Gradle Kotlin DSL): src/main, src/test (unit), src/integrationTest (Testcontainers)
+frontend/   Angular (plain CSS)
+infra/      setup.sh (GCP foundation), deploy.ps1, smoke.ps1, smoke-cleanup.sql
+docs/       architecture, decisions, Phase 1 status, AI log
+Dockerfile  node → Gradle bootJar → Java 21 JRE
+```

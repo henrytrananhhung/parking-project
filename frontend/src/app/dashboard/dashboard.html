@@ -1,0 +1,103 @@
+@if (message(); as m) {
+  <p class="message" [class.error]="m.kind === 'error'" [class.success]="m.kind === 'success'" role="status">
+    {{ m.text }}
+  </p>
+}
+
+<div class="cards">
+  <section class="card">
+    <h2>Wallet</h2>
+    <p class="balance">{{ balanceCents() === null ? '…' : dollars(balanceCents()!) }}</p>
+    <form class="inline" (ngSubmit)="deposit()">
+      <input
+        name="amount"
+        type="number"
+        min="0.01"
+        max="1000"
+        step="0.01"
+        placeholder="Amount ($)"
+        [(ngModel)]="depositAmount"
+      />
+      <button type="submit" class="primary" [disabled]="busy()">Deposit</button>
+    </form>
+    <p class="hint">Up to $1,000 per deposit. A reservation costs $10 per day.</p>
+  </section>
+
+  <section class="card">
+    <h2>My vehicles</h2>
+    @if (vehicles().length === 0) {
+      <p class="hint">No vehicle yet. Register a license plate to reserve a space.</p>
+    } @else {
+      <label>
+        Reserve with
+        <select name="vehicle" [ngModel]="selectedVehicleId()" (ngModelChange)="selectedVehicleId.set($event)">
+          @for (v of vehicles(); track v.id) {
+            <option [ngValue]="v.id">{{ v.plate }}</option>
+          }
+        </select>
+      </label>
+    }
+    <form class="inline" (ngSubmit)="addVehicle()">
+      <input name="plate" placeholder="License plate, e.g. 51F-123.45" [(ngModel)]="newPlate" />
+      <button type="submit" [disabled]="busy()">Add</button>
+    </form>
+  </section>
+
+  <section class="card">
+    <h2>My reservations</h2>
+    @if (reservations().length === 0) {
+      <p class="hint">No reservations yet.</p>
+    } @else {
+      <ul class="list">
+        @for (r of reservations(); track r.id) {
+          <li>Space <strong>{{ r.spaceId }}</strong> · {{ r.date }} · {{ r.plate }}</li>
+        }
+      </ul>
+    }
+  </section>
+</div>
+
+<section class="card">
+  <div class="board-header">
+    <h2>Parking spaces</h2>
+    @if (board(); as b) {
+      <p>
+        Reserving for <strong>{{ b.date }}</strong> ·
+        @if (b.open) {
+          <span class="badge open">Open</span>
+        } @else {
+          <span class="badge closed">Opens at {{ b.opensAt }} ({{ b.timezone }})</span>
+        }
+        · {{ availableCount() }} of {{ b.spaces.length }} available
+      </p>
+    }
+  </div>
+
+  <div class="legend">
+    <span><i class="swatch available"></i>Available</span>
+    <span><i class="swatch reserved"></i>Reserved</span>
+    <span><i class="swatch mine"></i>Mine</span>
+  </div>
+
+  @if (board(); as b) {
+    <div class="grid">
+      @for (s of b.spaces; track s.id) {
+        <button
+          type="button"
+          class="space"
+          [class.available]="!s.reserved"
+          [class.reserved]="s.reserved && !s.mine"
+          [class.mine]="s.mine"
+          [disabled]="s.reserved || busy()"
+          [title]="s.reserved ? 'Reserved (…' + s.plateSuffix + ')' : 'Reserve space ' + s.id"
+          (click)="reserve(s)"
+        >
+          <span class="space-no">{{ s.id }}</span>
+          <span class="space-info">{{ s.reserved ? '…' + s.plateSuffix : 'Free' }}</span>
+        </button>
+      }
+    </div>
+  } @else {
+    <p class="hint">Loading…</p>
+  }
+</section>
