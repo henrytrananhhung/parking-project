@@ -1,33 +1,33 @@
 package com.parking.entity;
 
 import java.time.Instant;
+import java.util.UUID;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
-import jakarta.persistence.GeneratedValue;
-import jakarta.persistence.GenerationType;
-import jakarta.persistence.Id;
+import jakarta.persistence.FetchType;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
 
 /**
  * Append-only money ledger entry: +amount for deposits, -amount for reservations.
- * Reservation charges are saved through JPA; deposits are inserted by {@link com.parking.repository.DepositLedgerRepository}
- * because they need {@code ON CONFLICT} on their idempotency key (column not mapped here).
+ * Reservation charges are saved through JPA. Deposits are inserted with {@code INSERT ... ON CONFLICT} on their
+ * idempotency key by {@code WalletTransactionRepository}; reservation charges have no key.
  */
 @Entity
-@Table(name = "wallet_transactions")
-public class WalletTransactionEntity {
+@Table(name = "wallet_transactions", uniqueConstraints = @UniqueConstraint(
+        name = "uk_wallet_transactions_user_idempotency_key", columnNames = {"user_id", "idempotency_key"}))
+public class WalletTransactionEntity extends AbstractEntity {
 
     public enum Type { DEPOSIT, RESERVATION }
 
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
-
-    @Column(name = "user_id", nullable = false)
-    private Long userId;
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "user_id", nullable = false)
+    private UserEntity user;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
@@ -36,29 +36,34 @@ public class WalletTransactionEntity {
     @Column(name = "amount_cents", nullable = false)
     private long amountCents;
 
-    @Column(name = "reservation_id")
-    private Long reservationId;
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "reservation_id")
+    private ReservationEntity reservation;
 
-    @Column(name = "created_at", nullable = false)
+    @Column(name = "idempotency_key", updatable = false)
+    private UUID idempotencyKey;
+
+    @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
     protected WalletTransactionEntity() {
     }
 
-    private WalletTransactionEntity(Long userId, Type type, long amountCents, Long reservationId) {
-        this.userId = userId;
+    private WalletTransactionEntity(UserEntity user, Type type, long amountCents, ReservationEntity reservation) {
+        this.user = user;
         this.type = type;
         this.amountCents = amountCents;
-        this.reservationId = reservationId;
+        this.reservation = reservation;
         this.createdAt = Instant.now();
     }
 
-    public static WalletTransactionEntity reservation(long userId, long priceCents, long reservationId) {
-        return new WalletTransactionEntity(userId, Type.RESERVATION, -priceCents, reservationId);
+    public static WalletTransactionEntity reservationCharge(UserEntity user, long priceCents,
+            ReservationEntity reservation) {
+        return new WalletTransactionEntity(user, Type.RESERVATION, -priceCents, reservation);
     }
 
-    public Long getUserId() {
-        return userId;
+    public UserEntity getUser() {
+        return user;
     }
 
     public Type getType() {
@@ -69,7 +74,11 @@ public class WalletTransactionEntity {
         return amountCents;
     }
 
-    public Long getReservationId() {
-        return reservationId;
+    public ReservationEntity getReservation() {
+        return reservation;
+    }
+
+    public UUID getIdempotencyKey() {
+        return idempotencyKey;
     }
 }

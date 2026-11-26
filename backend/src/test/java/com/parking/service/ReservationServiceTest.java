@@ -21,6 +21,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.beans.BeanUtils;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -29,7 +30,10 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import com.parking.dto.response.ReservationResponse;
+import com.parking.entity.AbstractEntity;
+import com.parking.entity.ParkingSpaceEntity;
 import com.parking.entity.ReservationEntity;
+import com.parking.entity.UserEntity;
 import com.parking.entity.VehicleEntity;
 import com.parking.entity.WalletTransactionEntity;
 import com.parking.event.ReservationConfirmedEvent;
@@ -73,9 +77,7 @@ class ReservationServiceTest {
     }
 
     private void ownsVehicle() {
-        VehicleEntity vehicle = new VehicleEntity(USER, "51F12345");
-        ReflectionTestUtils.setField(vehicle, "id", VEHICLE);
-        when(vehicles.findByIdAndUserId(VEHICLE, USER)).thenReturn(Optional.of(vehicle));
+        when(vehicles.findByIdAndUserId(VEHICLE, USER)).thenReturn(Optional.of(vehicle()));
     }
 
     private void spaceIsFree(long newReservationId) {
@@ -89,9 +91,21 @@ class ReservationServiceTest {
     }
 
     private static ReservationEntity existing(long id, int spaceId, long userId) {
-        ReservationEntity r = new ReservationEntity(spaceId, VEHICLE, userId, TOMORROW, PRICE);
-        ReflectionTestUtils.setField(r, "id", id);
-        return r;
+        ParkingSpaceEntity space = withId(BeanUtils.instantiateClass(ParkingSpaceEntity.class), spaceId);
+        return withId(new ReservationEntity(space, vehicle(), user(userId), TOMORROW, PRICE), id);
+    }
+
+    private static VehicleEntity vehicle() {
+        return withId(new VehicleEntity(user(USER), "51F12345"), VEHICLE);
+    }
+
+    private static UserEntity user(long id) {
+        return withId(new UserEntity("user" + id, "CIPHERTEXT"), id);
+    }
+
+    private static <T extends AbstractEntity> T withId(T entity, long id) {
+        ReflectionTestUtils.setField(entity, "id", id);
+        return entity;
     }
 
     private static ErrorCode codeOf(Throwable e) {
@@ -103,6 +117,7 @@ class ReservationServiceTest {
         ownsVehicle();
         spaceIsFree(99L);
         when(wallets.debitIfSufficient(USER, PRICE)).thenReturn(1);
+        when(reservations.getReferenceById(99L)).thenReturn(existing(99L, SPACE, USER));
 
         ReservationResponse result = serviceAt(OPEN_INSTANT).reserve(USER, VEHICLE, SPACE);
 
@@ -114,7 +129,8 @@ class ReservationServiceTest {
         verify(ledger).save(entry.capture());
         assertThat(entry.getValue().getType()).isEqualTo(WalletTransactionEntity.Type.RESERVATION);
         assertThat(entry.getValue().getAmountCents()).isEqualTo(-1000L);
-        assertThat(entry.getValue().getReservationId()).isEqualTo(99L);
+        assertThat(entry.getValue().getReservation().getId()).isEqualTo(99L);
+        assertThat(entry.getValue().getUser().getId()).isEqualTo(USER);
 
         verify(events).publishEvent(new ReservationConfirmedEvent(99L, SPACE, VEHICLE, USER, TOMORROW));
     }

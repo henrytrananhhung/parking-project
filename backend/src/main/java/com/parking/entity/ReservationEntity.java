@@ -5,27 +5,36 @@ import java.time.LocalDate;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
-import jakarta.persistence.GeneratedValue;
-import jakarta.persistence.GenerationType;
-import jakarta.persistence.Id;
+import jakarta.persistence.FetchType;
+import jakarta.persistence.ForeignKey;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
 
+/**
+ * One vehicle on one space for one day. Rows are created by {@code ReservationRepository.insertIfFree}
+ * ({@code INSERT ... ON CONFLICT DO NOTHING}): the two unique constraints decide the winner under concurrency.
+ */
 @Entity
-@Table(name = "reservations")
-public class ReservationEntity {
+@Table(name = "reservations", uniqueConstraints = {
+        @UniqueConstraint(name = "uk_reservations_space_date", columnNames = {"space_id", "reservation_date"}),
+        @UniqueConstraint(name = "uk_reservations_vehicle_date", columnNames = {"vehicle_id", "reservation_date"})})
+public class ReservationEntity extends AbstractEntity {
 
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
+    public static final String FK_SPACE = "reservations_space_id_fkey";
 
-    @Column(name = "space_id", nullable = false)
-    private Integer spaceId;
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "space_id", nullable = false, foreignKey = @ForeignKey(name = FK_SPACE))
+    private ParkingSpaceEntity space;
 
-    @Column(name = "vehicle_id", nullable = false)
-    private Long vehicleId;
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "vehicle_id", nullable = false)
+    private VehicleEntity vehicle;
 
-    @Column(name = "user_id", nullable = false)
-    private Long userId;
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "user_id", nullable = false)
+    private UserEntity user;
 
     @Column(name = "reservation_date", nullable = false)
     private LocalDate reservationDate;
@@ -33,35 +42,32 @@ public class ReservationEntity {
     @Column(name = "price_cents", nullable = false)
     private long priceCents;
 
-    @Column(name = "created_at", nullable = false)
+    @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
     protected ReservationEntity() {
     }
 
-    public ReservationEntity(int spaceId, long vehicleId, long userId, LocalDate reservationDate, long priceCents) {
-        this.spaceId = spaceId;
-        this.vehicleId = vehicleId;
-        this.userId = userId;
+    public ReservationEntity(ParkingSpaceEntity space, VehicleEntity vehicle, UserEntity user,
+            LocalDate reservationDate, long priceCents) {
+        this.space = space;
+        this.vehicle = vehicle;
+        this.user = user;
         this.reservationDate = reservationDate;
         this.priceCents = priceCents;
         this.createdAt = Instant.now();
     }
 
-    public Long getId() {
-        return id;
+    public ParkingSpaceEntity getSpace() {
+        return space;
     }
 
-    public Integer getSpaceId() {
-        return spaceId;
+    public VehicleEntity getVehicle() {
+        return vehicle;
     }
 
-    public Long getVehicleId() {
-        return vehicleId;
-    }
-
-    public Long getUserId() {
-        return userId;
+    public UserEntity getUser() {
+        return user;
     }
 
     public LocalDate getReservationDate() {

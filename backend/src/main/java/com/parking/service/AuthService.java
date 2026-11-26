@@ -64,12 +64,12 @@ public class AuthService {
         try {
             Long id = tx.execute(status -> {
                 UserEntity user = users.saveAndFlush(new UserEntity(username, protectedHash));
-                wallets.save(new WalletEntity(user.getId()));
+                wallets.save(new WalletEntity(user));
                 return user.getId();
             });
             return id;
         } catch (DataIntegrityViolationException e) {
-            if (Constraints.violated(e, "uk_users_username")) {
+            if (Constraints.violated(e, UserEntity.UK_USERNAME)) {
                 throw new BusinessException(ErrorCode.USERNAME_TAKEN);
             }
             throw e;

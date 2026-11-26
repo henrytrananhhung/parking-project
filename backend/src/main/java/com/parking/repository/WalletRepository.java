@@ -14,10 +14,10 @@ public interface WalletRepository extends JpaRepository<WalletEntity, Long> {
     @Query(value = "SELECT balance_cents FROM wallets WHERE user_id = :userId", nativeQuery = true)
     Optional<Long> findBalanceCents(@Param("userId") long userId);
 
-    /** Atomic credit. @return rows updated (0 = wallet missing). */
+    /** Atomic credit; increments the version. @return rows updated (0 = wallet missing). */
     @Modifying
     @Query(value = """
-            UPDATE wallets SET balance_cents = balance_cents + :amount, updated_at = now()
+            UPDATE wallets SET balance_cents = balance_cents + :amount, updated_at = now(), version = version + 1
             WHERE user_id = :userId
             """, nativeQuery = true)
     int credit(@Param("userId") long userId, @Param("amount") long amountCents);
@@ -29,7 +29,7 @@ public interface WalletRepository extends JpaRepository<WalletEntity, Long> {
      */
     @Modifying
     @Query(value = """
-            UPDATE wallets SET balance_cents = balance_cents - :amount, updated_at = now()
+            UPDATE wallets SET balance_cents = balance_cents - :amount, updated_at = now(), version = version + 1
             WHERE user_id = :userId AND balance_cents >= :amount
             """, nativeQuery = true)
     int debitIfSufficient(@Param("userId") long userId, @Param("amount") long amountCents);

@@ -126,6 +126,11 @@ public abstract class IntegrationTestSupport {
         return walletService.balanceCents(userId);
     }
 
+    /** Optimistic-locking version of the user's wallet. Assert changes relative to a value read earlier. */
+    protected long walletVersion(long userId) {
+        return count("SELECT version FROM wallets WHERE user_id = ?", userId);
+    }
+
     protected long count(String sql, Object... params) {
         JdbcClient.StatementSpec spec = jdbc.sql(sql);
         for (Object p : params) {

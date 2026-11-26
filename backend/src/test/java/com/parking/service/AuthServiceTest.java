@@ -81,7 +81,7 @@ class AuthServiceTest {
 
         ArgumentCaptor<WalletEntity> wallet = ArgumentCaptor.forClass(WalletEntity.class);
         verify(wallets).save(wallet.capture());
-        assertThat(wallet.getValue().getUserId()).isEqualTo(7L);
+        assertThat(wallet.getValue().getUser().getId()).isEqualTo(7L);
         assertThat(wallet.getValue().getBalanceCents()).isZero();
 
         verify(txManager).commit(any());

@@ -4,18 +4,14 @@ import java.time.Instant;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
-import jakarta.persistence.GeneratedValue;
-import jakarta.persistence.GenerationType;
-import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
 
 @Entity
-@Table(name = "users")
-public class UserEntity {
+@Table(name = "users", uniqueConstraints = @UniqueConstraint(name = UserEntity.UK_USERNAME, columnNames = "username"))
+public class UserEntity extends AbstractEntity {
 
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
+    public static final String UK_USERNAME = "uk_users_username";
 
     @Column(nullable = false, length = 50)
     private String username;
@@ -24,7 +20,7 @@ public class UserEntity {
     @Column(name = "password_cipher", nullable = false)
     private String passwordCipher;
 
-    @Column(name = "created_at", nullable = false)
+    @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
     protected UserEntity() {
@@ -34,10 +30,6 @@ public class UserEntity {
         this.username = username;
         this.passwordCipher = passwordCipher;
         this.createdAt = Instant.now();
-    }
-
-    public Long getId() {
-        return id;
     }
 
     public String getUsername() {
@@ -50,6 +42,6 @@ public class UserEntity {
 
     @Override
     public String toString() {
-        return "UserEntity{id=" + id + ", username=" + username + "}";
+        return "UserEntity{id=" + getId() + ", username=" + username + "}";
     }
 }

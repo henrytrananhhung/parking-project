@@ -76,6 +76,7 @@ class ReservationConcurrencyIT extends IntegrationTestSupport {
     void concurrentDeductionsNeverOverdrawTheWallet() throws Exception {
         // $30 balance, 10 vehicles, 10 different spaces at once: exactly 3 can be paid for.
         long userId = newUser("fleet", new BigDecimal("30"));
+        long versionBefore = walletVersion(userId);
         List<Callable<ReservationResponse>> tasks = new ArrayList<>();
         for (int i = 1; i <= 10; i++) {
             long vehicleId = newVehicle(userId, "FLEET" + String.format("%02d", i));
@@ -91,6 +92,8 @@ class ReservationConcurrencyIT extends IntegrationTestSupport {
         assertThat(count("SELECT count(*) FROM reservations WHERE user_id = ?", userId)).isEqualTo(3);
         assertThat(count("SELECT count(*) FROM wallet_transactions WHERE user_id = ? AND type = 'RESERVATION'", userId))
                 .isEqualTo(3);
+        // One version increment per successful debit; failed (0-row) debits and rolled-back attempts add none.
+        assertThat(walletVersion(userId)).isEqualTo(versionBefore + 3);
     }
 
     @Test
@@ -110,9 +113,11 @@ class ReservationConcurrencyIT extends IntegrationTestSupport {
         // Insufficient balance: the reservation row inserted before the debit is rolled back.
         long carol = newUser("carol", new BigDecimal("5"));
         long carolCar = newVehicle(carol, "CAROL01");
+        long carolVersion = walletVersion(carol);
         assertThatThrownBy(() -> reservationService.reserve(carol, carolCar, 6))
                 .extracting(e -> ((BusinessException) e).code()).isEqualTo(ErrorCode.INSUFFICIENT_BALANCE);
         assertThat(balanceCents(carol)).isEqualTo(500L);
+        assertThat(walletVersion(carol)).isEqualTo(carolVersion);
         assertThat(count("SELECT count(*) FROM reservations WHERE space_id = 6")).isZero();
         assertThat(count("SELECT count(*) FROM wallet_transactions WHERE user_id = ? AND type = 'RESERVATION'", carol))
                 .isZero();
@@ -172,6 +177,7 @@ class ReservationConcurrencyIT extends IntegrationTestSupport {
     void failureAfterTheDebitRollsTheDebitBack() {
         long userId = newUser("unlucky", BigDecimal.TEN);
         long vehicleId = newVehicle(userId, "UNLUCKY1");
+        long versionBefore = walletVersion(userId);
         // Fault injection inside PostgreSQL: the reservation's ledger insert (after the debit) fails.
         jdbc.sql("""
                 CREATE FUNCTION test_fail_reservation_charge() RETURNS trigger LANGUAGE plpgsql
@@ -190,6 +196,7 @@ class ReservationConcurrencyIT extends IntegrationTestSupport {
         }
 
         assertThat(balanceCents(userId)).isEqualTo(1000L);
+        assertThat(walletVersion(userId)).as("the debit's version increment is rolled back too").isEqualTo(versionBefore);
         assertThat(count("SELECT count(*) FROM reservations")).isZero();
     }
 

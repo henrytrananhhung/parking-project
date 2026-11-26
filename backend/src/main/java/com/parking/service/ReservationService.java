@@ -92,7 +92,9 @@ public class ReservationService {
         }
 
         // 3. Ledger + event (event listeners run only after commit).
-        ledger.save(WalletTransactionEntity.reservation(userId, priceCents, reservationId));
+        // References only (vehicle.getUser() is a lazy proxy, getReferenceById runs no SQL): one INSERT.
+        ledger.save(WalletTransactionEntity.reservationCharge(vehicle.getUser(), priceCents,
+                reservations.getReferenceById(reservationId)));
         events.publishEvent(new ReservationConfirmedEvent(reservationId, spaceId, vehicleId, userId, date));
         return new ReservationResponse(reservationId, spaceId, date, vehicle.getPlate(), priceCents);
     }
@@ -102,7 +104,7 @@ public class ReservationService {
             return reservations.insertIfFree(spaceId, vehicleId, userId, date, priceCents);
         } catch (DataIntegrityViolationException e) {
             // ON CONFLICT absorbs unique conflicts only; an unknown space still fails the foreign key.
-            if (Constraints.violated(e, "reservations_space_id_fkey")) {
+            if (Constraints.violated(e, ReservationEntity.FK_SPACE)) {
                 throw new BusinessException(ErrorCode.SPACE_NOT_FOUND);
             }
             throw e;
@@ -117,7 +119,7 @@ public class ReservationService {
     private ReservationResponse replayOrReject(long userId, long vehicleId, int spaceId, LocalDate date, String plate) {
         ReservationEntity existing = reservations.findByVehicleIdAndReservationDate(vehicleId, date)
                 .orElseThrow(() -> new BusinessException(ErrorCode.SPACE_ALREADY_RESERVED));
-        if (existing.getSpaceId() != spaceId || existing.getUserId() != userId) {
+        if (existing.getSpace().getId() != spaceId || existing.getUser().getId() != userId) {
             throw new BusinessException(ErrorCode.VEHICLE_ALREADY_RESERVED);
         }
         return new ReservationResponse(existing.getId(), spaceId, date, plate, existing.getPriceCents());
