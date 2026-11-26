@@ -43,8 +43,8 @@ npm start                                     # UI on http://localhost:4200, pro
 
 ```powershell
 cd backend
-.\gradlew.bat test              # 55 unit tests (JUnit 5 + Mockito); no Docker, GCP or network needed
-.\gradlew.bat integrationTest   # 29 integration tests (Testcontainers PostgreSQL); Docker required
+.\gradlew.bat test              # 62 unit tests (JUnit 5 + Mockito); no Docker, GCP or network needed
+.\gradlew.bat integrationTest   # 53 integration tests (Testcontainers PostgreSQL); Docker required
 ```
 
 Unit tests mock repositories and the KMS-backed `PasswordCipher`; time comes from `Clock.fixed`.
