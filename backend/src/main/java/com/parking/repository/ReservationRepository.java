@@ -11,6 +11,7 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.parking.entity.ReservationEntity;
+import com.parking.repository.projection.ConfirmedReservation;
 
 public interface ReservationRepository extends JpaRepository<ReservationEntity, Long> {
 
@@ -48,4 +49,17 @@ public interface ReservationRepository extends JpaRepository<ReservationEntity, 
             ORDER BY r.reservationDate DESC, r.space.id
             """)
     List<ReservationEntity> findAllByUserIdWithVehicle(@Param("userId") long userId);
+
+    /**
+     * Every reservation of {@code date}, in one query (at most one per space): reloads the reservation cache.
+     * Read-only transaction of its own (joins the caller's if any): called outside service transactions.
+     */
+    @Transactional(readOnly = true)
+    @Query("""
+            SELECT new com.parking.repository.projection.ConfirmedReservation(
+                r.id, r.space.id, r.vehicle.id, r.user.id, v.plate, r.priceCents)
+            FROM ReservationEntity r JOIN r.vehicle v
+            WHERE r.reservationDate = :date
+            """)
+    List<ConfirmedReservation> findConfirmedOn(@Param("date") LocalDate date);
 }

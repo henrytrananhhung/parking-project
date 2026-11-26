@@ -2,6 +2,7 @@ package com.parking.exception;
 
 import java.util.stream.Collectors;
 
+import org.redisson.client.RedisException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.NestedExceptionUtils;
@@ -49,6 +50,31 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         // per request. The root cause names the condition, e.g. Hikari's pool stats on a timeout.
         log.warn("Database temporarily unavailable, answering 503: {}",
                 NestedExceptionUtils.getMostSpecificCause(ex).toString());
+        return temporarilyUnavailable();
+    }
+
+    /**
+     * A bounded wait for a space lock or a reservation permit expired: load shedding at the peak, counted by the
+     * {@code parking.space_lock.wait} / {@code parking.db_permit.wait} metrics (outcome=timeout) rather than logged
+     * per request. Nothing was written, so retrying is safe.
+     */
+    @ExceptionHandler(CapacityExceededException.class)
+    ResponseEntity<ProblemDetail> handleCapacityExceeded(CapacityExceededException ex) {
+        log.debug("Capacity exceeded, answering 503: {}", ex.getMessage());
+        return temporarilyUnavailable();
+    }
+
+    /**
+     * Redis (reservation coordination) is unreachable. Reservations fail closed instead of reaching PostgreSQL
+     * uncoordinated; nothing was written, so retrying is safe. Deposits and reads never need Redis.
+     */
+    @ExceptionHandler(RedisException.class)
+    ResponseEntity<ProblemDetail> handleRedisUnavailable(RedisException ex) {
+        log.warn("Redis unavailable, answering 503: {}", ex.toString());
+        return temporarilyUnavailable();
+    }
+
+    private static ResponseEntity<ProblemDetail> temporarilyUnavailable() {
         return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
                 .header(HttpHeaders.RETRY_AFTER, Integer.toString(RETRY_AFTER_SECONDS))
                 .body(problem(ErrorCode.TEMPORARILY_UNAVAILABLE));

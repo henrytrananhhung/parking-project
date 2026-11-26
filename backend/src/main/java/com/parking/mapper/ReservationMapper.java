@@ -23,8 +23,8 @@ public final class ReservationMapper {
                 reservation.getReservationDate(), reservation.getVehicle().getPlate(), reservation.getPriceCents());
     }
 
-    /** "51F12345" -> "345": the dashboard never shows a full plate. */
-    static String plateSuffix(String plate) {
+    /** "51F12345" -> "345": the dashboard never shows a full plate (and the reservation cache never stores one). */
+    public static String plateSuffix(String plate) {
         return plate.length() <= 3 ? plate : plate.substring(plate.length() - 3);
     }
 }

@@ -1,6 +1,10 @@
-# Local development against docker-compose PostgreSQL.
+# Local development against docker-compose PostgreSQL and Redis.
 spring:
   datasource:
-    url: jdbc:postgresql://localhost:5432/parking
+    url: jdbc:postgresql://localhost:15432/parking
     username: parking
     password: parking
+
+parking:
+  redis:
+    password: ${REDIS_PASSWORD:parking}

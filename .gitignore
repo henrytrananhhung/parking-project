@@ -53,6 +53,8 @@ application-secret*.properties
 
 # ---------- GCP / infra local state ----------
 .gcloud/
+# Bearer tokens of the GCP load-test users (infra/loadtest/lt-gcp.ps1); deleted by its cleanup.
+infra/loadtest/.gcp/
 .terraform/
 *.tfstate
 *.tfstate.*

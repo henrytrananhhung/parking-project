@@ -1,11 +1,11 @@
 # CLAUDE.md
 ## Tech stacks
-- **Backend**: Java 21 (virtual threads preferred, not enabled yet), Spring Boot 4.2 — Web MVC, Data JPA, Security (OAuth2 resource server), Validation, Actuator
+- **Backend**: Java 21 (virtual threads enabled: `spring.threads.virtual.enabled`), Spring Boot 4.2 — Web MVC, Data JPA, Security (OAuth2 resource server), Validation, Actuator
 - **Database**: PostgreSQL 17, schema migrations with Flyway
 - **Frontend**: Angular 22, TypeScript 6
-- **Testing**: JUnit 5 + Mockito + AssertJ (unit), Testcontainers + PostgreSQL (integration)
+- **Testing**: JUnit 5 + Mockito + AssertJ (unit), Testcontainers + PostgreSQL + Redis (integration)
 - **Deployment**: GCP — Cloud Run, Cloud SQL (Cloud SQL Java Connector), Cloud KMS, Secret Manager, Artifact Registry; provisioned by the gcloud scripts in `infra/`
-- **No Redis yet** — add it only if horizontal scaling needs distributed locking (see Architecture Considerations)
+- **Redis 7.2 + Redisson 4.8** (M3): reservation coordination only (per-space fair lock, one global reservation-permit semaphore, confirmed-reservation cache); PostgreSQL stays the source of truth. Local: docker compose; GCP: Memorystore `parking-redis` (Basic 1 GB, private IP, AUTH), provisioned by `infra/setup-m3.ps1` (docs/m3-gcp-setup.md)
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
@@ -40,4 +40,4 @@ Gradle (Kotlin DSL) project in `backend/`. Run commands from `backend/`:
 - `./gradlew build` — compile + unit tests
 - `./gradlew test` — unit tests only (JUnit 5 + Mockito + AssertJ; no Docker, no GCP, no network)
 - `./gradlew integrationTest` — integration tests in `src/integrationTest` (Testcontainers + real PostgreSQL; requires Docker). Not part of `test` or `check`.
-- `./gradlew bootRun` — run the app locally (profile: `local`); start the database first with `docker compose up -d` from the repo root.
+- `./gradlew bootRun` — run the app locally (profile: `local`); start PostgreSQL and Redis first with `docker compose up -d` from the repo root.

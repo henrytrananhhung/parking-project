@@ -80,6 +80,8 @@ smoke-20261126-064020-6pvu   (space 79)
    Run it once. It is a single atomic statement. Expected result:
    `users_removed = 2, reservations_removed = 2, vehicles_removed = 4, ledger_rows_removed = 4`.
    Any other result means it touched something unexpected; the statement only deletes listed `smoke-…` usernames.
+   **Since M3 is live on GCP (2026-11-27):** the deleted reservations stay in the Redis reservation cache. Clear it right
+   after this step: [README, GCP cleanup](../README.md#gcp-cleanup-cloud-sql--memorystore), steps 2 and 3.
 4. **Verify:** re-run the preview (0 rows). On the dashboard, spaces 79 and 80 are green again, unless a teammate has reserved them since.
 5. Delete those lines from your local `infra/smoke-accounts.log`. The other two entries there came from local runs
    (Docker database) and do not exist in Cloud SQL.

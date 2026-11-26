@@ -18,12 +18,15 @@ import java.util.concurrent.TimeUnit;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
+import org.redisson.api.RedissonClient;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.test.context.ActiveProfiles;
 
+import com.parking.concurrency.DbPermits;
+import com.parking.concurrency.ReservationStateCache;
 import com.parking.service.AuthService;
 import com.parking.exception.BusinessException;
 import com.parking.service.ReservationWindow;
@@ -55,10 +58,20 @@ public abstract class IntegrationTestSupport {
     protected MutableClock clock;
     @Autowired
     private ReservationWindow window;
+    @Autowired
+    protected RedissonClient redisson;
+    @Autowired
+    protected ReservationStateCache reservationCache;
+    @Autowired
+    protected DbPermits dbPermits;
 
     @BeforeEach
     void cleanDatabase() {
         jdbc.sql("TRUNCATE wallet_transactions, reservations, vehicles, wallets, users RESTART IDENTITY CASCADE").update();
+        // Redis and the in-memory caches describe the rows just deleted (and ids restart): forget them too.
+        redisson.getKeys().flushdb();
+        reservationCache.clearLocalCaches();
+        dbPermits.initialize();
     }
 
     @BeforeEach

@@ -4,10 +4,19 @@ spring:
   profiles:
     # Local development by default; Cloud Run sets SPRING_PROFILES_ACTIVE=gcp (or gcp,demo).
     default: local
+  threads:
+    # Request handling on Java 21 virtual threads: waiting for a space lock, a permit or a connection is cheap.
+    virtual:
+      enabled: true
   datasource:
     hikari:
-      maximum-pool-size: ${DB_POOL_SIZE:5}
-      connection-timeout: ${DB_CONNECTION_TIMEOUT_MS:10000}
+      # LOCAL STARTING VALUE, not the GCP sizing. The reservation permit budget is global, so one instance may hold
+      # every permit: keep this >= parking.concurrency.reservation-permits.permits (4) plus headroom for deposits and
+      # reads (they take no permit), and DB_POOL_SIZE x max instances (x 2 for scale-out overshoot) well below the
+      # database's max_connections.
+      maximum-pool-size: ${DB_POOL_SIZE:10}
+      # Bounded wait for a pooled connection; on timeout the API answers 503 + Retry-After.
+      connection-timeout: ${DB_CONNECTION_TIMEOUT_MS:3000}
   jpa:
     open-in-view: false
     hibernate:
@@ -47,3 +56,39 @@ parking:
     price-cents: 1000
   wallet:
     max-deposit-cents: 100000
+  # Redis (Redisson) coordinates reservations across instances. PostgreSQL stays the source of truth.
+  redis:
+    address: ${REDIS_ADDRESS:redis://localhost:6379}
+    password: ${REDIS_PASSWORD:}
+    # Fail fast when Redis is unreachable: reservations and deposits then answer 503 (fail closed) within ~2 s.
+    connect-timeout: 1s
+    timeout: 500ms
+    # Also bounds the attempts to get a pub/sub subscription for a lock waiter: 1 is too few during a burst.
+    retry-attempts: 3
+    retry-delay: 100ms
+    connection-pool-size: 64
+    connection-minimum-idle-size: 8
+    # Every request waiting for a space lock holds one subscription: size for the expected waiters per instance
+    # (pool x per-connection), and keep connections open so an 8 PM burst does not have to open them first.
+    subscription-connection-pool-size: 50
+    subscription-connection-minimum-idle-size: 20
+    subscriptions-per-connection: 20
+  concurrency:
+    # Leases are soft limits: PostgreSQL constraints keep data correct even if a lease expires mid-transaction.
+    # Measured locally (Phase 2): the fair-lock queue of one space drains ~3 ms per waiter, so 1,000 simultaneous
+    # requests for one space need ~3 s. A 3 s wait produced 53% 503s in that test; 10 s gives ~3x headroom. A request
+    # that crashes while queued blocks its space for at most lease + wait-timeout.
+    space-lock:
+      wait-timeout: 10s
+      lease: 20s
+    # Global (all instances) budget for concurrent reservation transactions; the only Redis semaphore. Every instance
+    # must use the same value (it is part of the semaphore's name). Deposits and reads take no permit: HikariCP alone
+    # limits them, so they keep working without Redis.
+    reservation-permits:
+      permits: 4
+      wait-timeout: 3s
+      lease: 15s
+    # The cached reservations of a date are reloaded from PostgreSQL at least this often.
+    cache-refresh-interval: 60s
+    # Vehicle owners cached per instance (vehicles never change owner).
+    owner-cache-size: 100000

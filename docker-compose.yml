@@ -1,4 +1,4 @@
-# Local development database only. The app itself runs with `./gradlew bootRun` (profile: local).
+# Local development services. The app itself runs with `./gradlew bootRun` (profile: local).
 services:
   postgres:
     image: postgres:17-alpine
@@ -7,11 +7,27 @@ services:
       POSTGRES_USER: parking
       POSTGRES_PASSWORD: parking
     ports:
-      - "5432:5432"
+      - "15432:5432"   # host 15432: leaves 5432 free for a PostgreSQL installed on the machine
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U parking -d parking"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Reservation coordination only (space locks, permits, confirmed-reservation cache); PostgreSQL stays the
+  # source of truth. No persistence: everything in it can be rebuilt. noeviction: locks and permits must never
+  # be evicted under memory pressure (a full Redis fails writes instead, which the app answers with 503).
+  # If you reset the database volume, restart this container too: its cache describes the old rows.
+  redis:
+    image: redis:7.2-alpine
+    command: ["redis-server", "--requirepass", "parking", "--maxmemory", "256mb",
+              "--maxmemory-policy", "noeviction", "--save", "", "--appendonly", "no"]
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "parking", "--no-auth-warning", "ping"]
       interval: 5s
       timeout: 3s
       retries: 10

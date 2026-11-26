@@ -44,21 +44,24 @@ class QueryCountIT extends IntegrationTestSupport {
     }
 
     @Test
-    void dashboardIsOneQueryWhateverTheNumberOfReservations() {
+    void dashboardIsOneQueryWhenNotCachedAndNoneOnceCached() {
         long owner = newUser("fleet", new BigDecimal("800"));
         long viewer = newUser("viewer", BigDecimal.ZERO);
-        assertThat(statements(() -> reservationService.dashboard(owner))).as("no reservation").isEqualTo(1);
+        // Nothing cached for the date yet: one reload of its reservations from PostgreSQL.
+        assertThat(statements(() -> reservationService.dashboard(owner))).as("not cached").isEqualTo(1);
+        assertThat(statements(() -> reservationService.dashboard(owner))).as("cached, no reservation").isZero();
 
         for (int space = 1; space <= 80; space++) {
             reservationService.reserve(owner, newVehicle(owner, "FLEET%03d".formatted(space)), space);
             if (space == 1) {
-                assertThat(statements(() -> reservationService.dashboard(owner))).as("1 reservation").isEqualTo(1);
+                assertThat(statements(() -> reservationService.dashboard(owner))).as("cached, 1 reservation").isZero();
             }
         }
 
-        assertThat(statements(() -> reservationService.dashboard(owner))).as("80 reservations").isEqualTo(1);
-        assertThat(statements(() -> reservationService.dashboard(viewer))).as("80, other user").isEqualTo(1);
+        assertThat(statements(() -> reservationService.dashboard(owner))).as("sold out").isZero();
+        assertThat(statements(() -> reservationService.dashboard(viewer))).as("sold out, other user").isZero();
         assertThat(reservationService.dashboard(owner).spaces()).hasSize(80).allMatch(s -> s.reserved() && s.mine());
+        assertThat(reservationService.dashboard(viewer).spaces()).noneMatch(s -> s.mine());
     }
 
     @Test
@@ -84,15 +87,47 @@ class QueryCountIT extends IntegrationTestSupport {
         long broke = newUser("broke", BigDecimal.ZERO);
         long brokeVehicle = newVehicle(broke, "BROKE001");
 
-        // vehicle SELECT, INSERT ... ON CONFLICT, conditional UPDATE, ledger INSERT
+        // Competing for a free space: vehicle SELECT, INSERT ... ON CONFLICT, conditional UPDATE, ledger INSERT
         assertThat(statements(() -> reservationService.reserve(userId, vehicleId, 1))).as("new").isEqualTo(4);
-        // vehicle SELECT, conflicting INSERT, reservation SELECT
-        assertThat(statements(() -> reservationService.reserve(userId, vehicleId, 1))).as("retry").isEqualTo(3);
+        // Retry of that success: answered from the cached (committed) reservation
+        assertThat(statements(() -> reservationService.reserve(userId, vehicleId, 1))).as("retry").isZero();
+        // The same vehicle on another space: VEHICLE_ALREADY_RESERVED from the cached reservation
+        assertThat(statementsOfRejected(() -> reservationService.reserve(userId, vehicleId, 3)))
+                .as("vehicle already reserved").isZero();
+        // Space known taken, rival's vehicle not known yet: one read (owner + its reservation), no claim
         assertThat(statementsOfRejected(() -> reservationService.reserve(rival, rivalVehicle, 1)))
-                .as("space taken").isEqualTo(3);
-        // vehicle SELECT, INSERT, UPDATE matching no row; then the transaction rolls back
+                .as("space taken").isEqualTo(1);
+        // Free space: vehicle SELECT, INSERT, UPDATE matching no row; then the transaction rolls back
         assertThat(statementsOfRejected(() -> reservationService.reserve(broke, brokeVehicle, 2)))
                 .as("insufficient balance").isEqualTo(3);
+    }
+
+    @Test
+    void soldOutDateAnswersEveryReservationRequestWithoutTheDatabase() {
+        long owner = newUser("fleet", new BigDecimal("800"));
+        long firstVehicle = newVehicle(owner, "FLEET001");
+        reservationService.reserve(owner, firstVehicle, 1);
+        for (int space = 2; space <= 80; space++) {
+            reservationService.reserve(owner, newVehicle(owner, "FLEET%03d".formatted(space)), space);
+        }
+        long late = newUser("late", BigDecimal.TEN);
+        long lateVehicle = newVehicle(late, "LATE0001");
+
+        // A vehicle this instance has never seen: one read to learn its owner (vehicles never change owner).
+        assertThat(statementsOfRejected(() -> reservationService.reserve(late, lateVehicle, 5)))
+                .as("late, first request").isEqualTo(1);
+        assertThat(statementsOfRejected(() -> reservationService.reserve(late, lateVehicle, 6)))
+                .as("late, any later request").isZero();
+        assertThat(statements(() -> reservationService.reserve(owner, firstVehicle, 1))).as("retry").isZero();
+        assertThat(statementsOfRejected(() -> reservationService.reserve(owner, firstVehicle, 2)))
+                .as("vehicle already reserved").isZero();
+
+        // Instances preload vehicle owners at startup: then even a vehicle's first request needs no read.
+        long later = newUser("later", BigDecimal.TEN);
+        long laterVehicle = newVehicle(later, "LATE0002");
+        reservationCache.preloadOwners();
+        assertThat(statementsOfRejected(() -> reservationService.reserve(later, laterVehicle, 7)))
+                .as("preloaded owner, first request").isZero();
     }
 
     @Test

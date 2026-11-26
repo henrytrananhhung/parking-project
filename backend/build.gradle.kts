@@ -35,6 +35,8 @@ dependencies {
 	// Cloud KMS client for password protection (used only by KmsPasswordCipher in the gcp profile).
 	implementation(platform("com.google.cloud:libraries-bom:26.94.0"))
 	implementation("com.google.cloud:google-cloud-kms")
+	// Redis coordination (per-space fair lock, distributed semaphores, confirmed-reservation cache).
+	implementation("org.redisson:redisson:4.8.0")
 
 	// Unit tests: JUnit 5 + Mockito + AssertJ. No Docker, no GCP, no network.
 	testImplementation("org.springframework.boot:spring-boot-starter-test")

@@ -4,6 +4,11 @@
 #   PROJECT_ID=my-project REGION=asia-southeast1 bash setup.sh
 # Re-runnable: each step skips resources that already exist.
 #
+# Phase 1 foundation only: do NOT re-run it for M3. The M3 changes (Cloud SQL upgrade, Memorystore parking-redis,
+# secret redis-password) are in infra/setup-m3.ps1, explained step by step in docs/m3-gcp-setup.md.
+# Created by hand, not by this script: VM parking-bastion (e2-micro, parking-run-subnet, OS Login, no external IP)
+# and firewall rule parking-allow-iap-ssh (tcp:22 from the IAP range 35.235.240.0/20).
+#
 # Prerequisites (console): project created, billing account linked.
 set -euo pipefail
 
@@ -16,7 +21,7 @@ SUBNET=parking-run-subnet                     # Direct VPC egress subnet (/26 or
 SUBNET_RANGE=10.10.0.0/24
 PSA_RANGE=google-managed-services-parking     # Private Services Access range for Cloud SQL
 SQL_INSTANCE=parking-db
-SQL_TIER=db-g1-small                          # Shared core, ~50 max connections. Resize later for load tests.
+SQL_TIER=db-g1-small                          # Shared core, 50 max connections. M3: infra/setup-m3.ps1 -Step sql-upgrade.
 DB_NAME=parking
 DB_USER=parking_app
 KEYRING=parking-keyring

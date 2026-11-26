@@ -16,3 +16,14 @@ spring:
 parking:
   demo:
     password: TestDemoPass1
+  # Business tests race many threads through one Testcontainers PostgreSQL: generous waits keep them about business
+  # outcomes, not about how fast the machine is. Waits, leases and the permit limit itself are tested with
+  # dedicated instances (ConcurrencyControlIT).
+  concurrency:
+    space-lock:
+      wait-timeout: 10s
+      lease: 30s
+    reservation-permits:
+      permits: 10
+      wait-timeout: 10s
+      lease: 30s

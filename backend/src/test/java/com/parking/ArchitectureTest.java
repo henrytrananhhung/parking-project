@@ -76,6 +76,14 @@ class ArchitectureTest {
     }
 
     @Test
+    void reservationTransactionIsOnlyCalledByTheServiceThatTakesTheLockAndThePermit() throws IOException {
+        // The reservation transaction itself takes no space lock and no reservation permit: only ReservationService,
+        // which takes both first, may call it.
+        assertThat(filesReferencing("ReservationBookingService"))
+                .containsExactlyInAnyOrder("ReservationBookingService.java", "ReservationService.java");
+    }
+
+    @Test
     void controllersNeitherReturnNorAcceptEntities() {
         List<Class<?>> controllers = classes(new AnnotationTypeFilter(RestController.class), "com.parking");
 
@@ -120,6 +128,16 @@ class ArchitectureTest {
         return scanner.findCandidateComponents(basePackage).stream()
                 .<Class<?>>map(bean -> ClassUtils.resolveClassName(bean.getBeanClassName(), null))
                 .toList();
+    }
+
+    private static List<String> filesReferencing(String className) throws IOException {
+        Pattern reference = Pattern.compile("\\b" + className + "\\b");
+        try (Stream<Path> files = Files.walk(Path.of("src/main/java"))) {
+            return files.filter(file -> file.toString().endsWith(".java"))
+                    .filter(file -> reference.matcher(read(file)).find())
+                    .map(file -> file.getFileName().toString())
+                    .toList();
+        }
     }
 
     private static String read(Path file) {

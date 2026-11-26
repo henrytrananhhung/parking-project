@@ -14,6 +14,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.redisson.client.RedisConnectionException;
+import org.redisson.client.RedisTimeoutException;
 import org.springframework.dao.CannotAcquireLockException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.QueryTimeoutException;
@@ -47,19 +49,25 @@ class GlobalExceptionHandlerTest {
         mvc = MockMvcBuilders.standaloneSetup(controller).setControllerAdvice(new GlobalExceptionHandler()).build();
     }
 
-    static Stream<RuntimeException> temporaryDatabaseFailures() {
+    static Stream<RuntimeException> temporaryFailures() {
         return Stream.of(
                 // Hikari pool exhausted when the transaction begins (the 8 PM peak).
                 new CannotCreateTransactionException("Could not open JPA EntityManager for transaction",
                         new SQLTransientConnectionException("HikariPool-1 - Connection is not available")),
                 new CannotGetJdbcConnectionException("Failed to obtain JDBC Connection"),
                 new CannotAcquireLockException("lock timeout"),
-                new QueryTimeoutException("statement timeout"));
+                new QueryTimeoutException("statement timeout"),
+                // Bounded waits of the reservation coordination expired (load shedding at the peak).
+                new CapacityExceededException("space lock"),
+                new CapacityExceededException("reservation permit"),
+                // Redis unreachable or too slow: reservations fail closed.
+                new RedisConnectionException("Unable to connect to Redis server"),
+                new RedisTimeoutException("Command execution timeout"));
     }
 
     @ParameterizedTest
-    @MethodSource("temporaryDatabaseFailures")
-    void temporaryDatabaseFailureIs503WithRetryAfter(RuntimeException failure) throws Exception {
+    @MethodSource("temporaryFailures")
+    void temporaryFailureIs503WithRetryAfter(RuntimeException failure) throws Exception {
         controller.next = failure;
 
         mvc.perform(get("/boom"))
